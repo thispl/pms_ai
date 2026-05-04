@@ -119,3 +119,114 @@ def save_generated_kras(kras, department):
         created_names.append(doc.name)
         
     return created_names
+
+@frappe.whitelist()
+def analyze_dashboard_chart(chart_context, chart_data):
+    # Parse the data string back into a dictionary
+    data = json.loads(chart_data)
+    
+    api_key = frappe.conf.get("gemini_api_key")
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-2.5-flash')
+
+    # Tell Gemini what context it is looking at based on the chart
+    if chart_context == "completion_status":
+        prompt_instruction = "Analyze the ratio of completed vs pending appraisals. Identify if the completion rate is healthy or if there are bottlenecks."
+    elif chart_context == "bell_curve":
+        prompt_instruction = "Analyze this 5-point performance distribution. Does it look like a healthy normal distribution? Identify if managers are being too lenient (skewed right) or too harsh (skewed left)."
+    elif chart_context == "daily_trend":
+        prompt_instruction = "Analyze the daily pacing of appraisal submissions. Note any sudden spikes or long lulls that indicate low engagement."
+    elif chart_context == "nine_box":
+        prompt_instruction = "Analyze this 9-box talent matrix distribution. Identify if we have a healthy pipeline of future leaders (High Potential/Outstanding Perf) and note the risk of underperformers. Provide succession planning recommendations."
+    prompt = f"""
+    You are an HR Executive Analyst. 
+    
+    Task: {prompt_instruction}
+    
+    Data provided:
+    {json.dumps(data, indent=2)}
+    
+    Provide a concise, 2-paragraph analysis. Use a professional, consultative tone. 
+    Use bullet points if highlighting specific data points. Do not include introductory text like 'Here is the analysis', just output the insights.
+    """
+
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        frappe.log_error("Dashboard AI Error", str(e))
+        return "An error occurred while generating insights. Check the Frappe Error Logs."
+
+@frappe.whitelist()
+def generate_master_summary(dashboard_data):
+    data = json.loads(dashboard_data)
+    
+    api_key = frappe.conf.get("gemini_api_key")
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-2.5-flash')
+
+    prompt = f"""
+    You are a Chief HR Officer analyzing the company-wide Appraisal Dashboard.
+    
+    Here is the aggregated data for the current cycle:
+    {json.dumps(data, indent=2)}
+    
+    Please provide a comprehensive Executive Summary. Structure it with clear HTML headings (<h4>), bold text, and bullet points. 
+    Include:
+    1. Overall Health & Completion status.
+    2. Rating Distribution analysis (Is it too lenient? Too harsh? Bell curve normal?).
+    3. Actionable recommendations for the HR team based on this data.
+    
+    Output strictly in clean HTML format. Do NOT use markdown backticks like ```html.
+    """
+
+    try:
+        response = model.generate_content(prompt)
+        # Clean potential markdown
+        ai_html = response.text.replace("```html", "").replace("```", "").strip()
+        return ai_html
+    except Exception as e:
+        frappe.log_error("Master AI Summary Error", str(e))
+        return "An error occurred while generating the master summary."
+
+@frappe.whitelist()
+def generate_kra_description(docname):
+    # Fetch the document
+    doc = frappe.get_doc("KRA", docname) 
+    
+    # Adjust "kra_title" to your actual fieldname
+    kra_name = doc.get("kra_title") or doc.name 
+
+    if not kra_name:
+        return "Error: Please enter a KRA title first."
+
+    # Connect to Gemini
+    api_key = frappe.conf.get("gemini_api_key")
+    genai.configure(api_key=api_key)
+    
+    # Using flash-latest for fast text generation
+    model = genai.GenerativeModel('gemini-2.5-flash')
+
+    # The New Plain-Text Prompt
+    prompt = f"""
+    You are an HR Expert. Write a concise, 1 to 2 sentence description for the following Key Result Area (KRA): "{kra_name}".
+    
+    The description must be plain text only. 
+    Do NOT use bullet points, bolding, HTML, or any markdown formatting.
+    """
+
+    try:
+        response = model.generate_content(prompt)
+        # Clean any accidental markdown backticks just in case
+        ai_text = response.text.replace("```text", "").replace("```", "").strip()
+
+        # Save directly to the database
+        # Adjust "KRA" and "description" to your actual DocType and fieldname
+        frappe.db.set_value("KRA", docname, "description", ai_text)
+        frappe.db.commit()
+
+        return ai_text
+
+    except Exception as e:
+        frappe.log_error(title=f"KRA AI Error for {docname}", message=str(e))
+        return f"Error: {str(e)}"

@@ -43,11 +43,12 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
-
+doctype_js = {
+    "Appraisal" : "public/js/appraisal.js",
+}
 # Svg Icons
 # ------------------
 # include app icons in desk
@@ -134,7 +135,10 @@ app_license = "mit"
 
 doc_events = {
 	"Appraisal": {
-		"validate": "pms_ai.custom.update_appraisal_score",
+		"validate": ["pms_ai.custom.update_appraisal_score","pms_ai.custom.update_appraisal_approved_date",
+		"pms_ai.custom.update_appraisal_from_kra","pms_ai.custom.populate_objectives","pms_ai.custom.set_template_by_default"],
+		"on_submit": "pms_ai.custom.validate_total_score_for_assessor",		
+		"after_insert":["pms_ai.custom.update_appraisal_from_kra"]
 	}
 }
 

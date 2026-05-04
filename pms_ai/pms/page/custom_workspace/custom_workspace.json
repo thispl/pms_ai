@@ -1,19 +1,18 @@
 {
  "content": null,
- "creation": "2026-03-14 15:11:13.921458",
+ "creation": "2026-03-18 11:16:53.794157",
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-03-15 13:57:57.231266",
+ "modified": "2026-03-18 13:32:12.783577",
  "modified_by": "Administrator",
  "module": "PMS",
- "name": "appraisal-dashboard",
+ "name": "custom-workspace",
  "owner": "Administrator",
- "page_name": "appraisal-dashboard",
+ "page_name": "custom-workspace",
  "roles": [],
  "script": null,
  "standard": "Yes",
  "style": null,
- "system_page": 1,
- "title": "PMS Dashboard"
+ "system_page": 1
 }

@@ -10,12 +10,7 @@ frappe.pages['appraisal-dashboard'].on_page_load = function(wrapper) {
 	let start = frappe.datetime.month_start();
 	let end = frappe.datetime.month_end();
 	let completionDonutChart;
-let bellCurveChart;
-	// ---------------- FILTERS ----------------
-
-	
-
-	// ---------------- STYLES ----------------
+	let bellCurveChart;
 
 	$(`<style>
 .chart-legend{
@@ -175,9 +170,6 @@ let bellCurveChart;
 .box9{background:#1e88e5;}
 
 </style>`).appendTo("head");
-
-
-
 	$(page.body).html(`
 
 <div class="dashboard-bg">
@@ -191,7 +183,15 @@ let bellCurveChart;
 <div class="kpi-value" id="total_emp">0</div>
 <div class="kpi-title">Employees Appraised</div>
 </div>
+<div class="kpi-card">
+<div class="kpi-value" id="total_completed">0%</div>
+<div class="kpi-title">Completed</div>
+</div>
 
+<div class="kpi-card">
+<div class="kpi-value" id="total_pending">0%</div>
+<div class="kpi-title">Pending</div>
+</div>
 <div class="kpi-card">
 <div class="kpi-value" id="avg_score">0</div>
 <div class="kpi-title">Average Score</div>
@@ -207,15 +207,7 @@ let bellCurveChart;
 <div class="kpi-title">Low Performers</div>
 </div>
 
-<div class="kpi-card">
-<div class="kpi-value" id="total_completed">0%</div>
-<div class="kpi-title">Completed</div>
-</div>
 
-<div class="kpi-card">
-<div class="kpi-value" id="total_pending">0%</div>
-<div class="kpi-title">Pending</div>
-</div>
 
 </div>
 
@@ -233,7 +225,7 @@ function trigger_dashboard_reload(){
     clearTimeout(reload_timeout);
     reload_timeout = setTimeout(() => {
         load_dashboard();
-    }, 300); // waits 300ms so multiple changes merge into one call
+    }, 300); 
 }
 let department_field = frappe.ui.form.make_control({
     df: {
@@ -276,22 +268,13 @@ let to_date_field = frappe.ui.form.make_control({
 });
 
 
-// ✅ ADD THESE LINES HERE
 from_date_field.set_value(start, true);
 to_date_field.set_value(end, true);
 initializing = false;
-	// ---------------- LOAD DASHBOARD ----------------
 
 	function load_dashboard(){
 		$("#dashboard-content").html("");
-		// let filters = [
-		// 	["creation","between",[from_date.get_value(),to_date.get_value()]],
-		// 	["docstatus","in",[0,1]]
-		// ];
-
-		// if(department.get_value()){
-		// 	filters.push(["department","=",department.get_value()]);
-		// }
+		
 		let filters = [
     ["creation","between",[from_date_field.get_value(),to_date_field.get_value()]],
     ["docstatus","in",[0,1]]
@@ -314,14 +297,12 @@ if(department_field.get_value()){
 			let scores = [];
 			let cycleList = [...new Set(data.map(d => d.appraisal_cycle).filter(Boolean))];
 			data.forEach(d => {
-				// Table aggregation
 				let dept = d.department || "Unknown";
 				if(!tableData[dept]) tableData[dept] = {total:0, completed:0, pending:0};
 				tableData[dept].total +=1;
 				if(d.docstatus===1) tableData[dept].completed +=1;
 				else tableData[dept].pending +=1;
 
-				// For bell chart
 				scores.push(parseFloat(d.total_score)||0);
 			});
 
@@ -336,7 +317,6 @@ if(department_field.get_value()){
 			$("#total_completed").text(totalCompletedPct+"%");
 			$("#total_pending").text(totalPendingPct+"%");
 
-			// ---- Populate table + donut chart ----
 			let currentYear = new Date().getFullYear();
 			let html = `<div style="display:flex; gap:30px; justify-content:center; flex-wrap:wrap; margin:40px auto; max-width:1200px;">`;
 
@@ -457,6 +437,33 @@ completionDonutChart = new Chart(ctxDonut, {
         }]
     });
 });
+// 1. Table
+                // htmlBuffer += '<div style="overflow-x:auto; background:white; border-radius:10px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); padding:20px; margin-bottom: 20px;">' +
+                //     '<h3 style="color:#2E86C1; text-align:center; margin-bottom:20px;">Staff Performance Appraisal Status</h3>' +
+                //     '<table class="table" style="width:100%; border-collapse:separate; border-spacing:0; text-align:center;">' +
+                //     '<thead style="background:#2E86C1; color:white; font-weight:600;">' +
+                //     '<tr><th style="padding:12px; text-align:left;">Unit</th><th>Total Due</th><th>Completed %</th><th>Pending %</th></tr>' +
+                //     '</thead><tbody>';
+                // Object.keys(tableData).forEach(dept=>{
+                //     let d=tableData[dept];
+                //     htmlBuffer += '<tr style="transition: background 0.3s;" onmouseover="this.style.background=\'#f0f8ff\'" onmouseout="this.style.background=\'white\'">' +
+                //         '<td style="padding:10px;text-align:left;">' + dept + '</td><td>' + d.total + '</td>' +
+                //         '<td>' + (d.total ? ((d.completed/d.total)*100).toFixed(0) : 0) + '%</td><td>' + (d.total ? ((d.pending/d.total)*100).toFixed(0) : 0) + '%</td></tr>';
+                // });
+                // htmlBuffer += '</tbody></table></div>';
+
+                // 2. Donut Chart
+                // htmlBuffer += '<button class="collapsible-btn active">📊 Appraisal Completion Status</button>' +
+                // '<div class="collapsible-wrapper" style="display:block;">' +
+                //     '<div class="chart-full-width"><canvas id="completionDonutChart" style="max-height: 350px;"></canvas></div>' +
+                //     '<div class="ai-insight-card">' +
+                //         '<div class="ai-card-header">' +
+                //             '<h4>✨ Completion Insights</h4>' +
+                //             '<button class="btn btn-sm btn-primary" id="btn-ai-donut">Generate Insight</button>' +
+                //         '</div>' +
+                //         '<div id="ai-content-donut" class="ai-insight-content">Click Generate Insight for completion rate analysis.</div>' +
+                //     '</div>' +
+                // '</div>';
 
 			// ---- 9-Box Matrix & Bell Curve ----
 			// Compute counts for 9-box
@@ -492,7 +499,7 @@ completionDonutChart = new Chart(ctxDonut, {
 				percentages[i] = total?((percentages[i]/total)*100).toFixed(1):0;
 			}
 
-$("#dashboard-content").append(`<div style="display:flex; gap:50px; justify-content:center; flex-wrap:wrap; margin-top:50px;">
+$("#dashboard-content").append(`<div style="display:flex; gap:30px; justify-content:center; flex-wrap:wrap; margin-top:50px;">
 	<div class="matrix-wrapper" style="flex:0 0 500px;">
 		<div class="y-axis">Leadership Potential</div>
 		<div class="grid-container">
@@ -516,10 +523,10 @@ $("#dashboard-content").append(`<div style="display:flex; gap:50px; justify-cont
 		</div>
 	</div>
 	<div class="chart-section" style="flex:0 0 500px;">
-		<h3 style="text-align:center">Performance Rating Bell Distribution</h3>
+		<h3 style="text-align:center;margin-top:50px;">Performance Rating Bell Distribution</h3>
 		<div class="chart-flex" style="flex-direction:column; align-items:center; justify-content:center;">
 			<div class="chart-left" style="width:100%;"><canvas id="bellCurveChart"></canvas></div>
-			<div class="chart-legend" style="margin-top:20px;">
+			<div class="chart-legend" style="margin-top:50px;">
 				<div class="legend-item"><span class="legend-color poor"></span>Poor</div>
 				<div class="legend-item"><span class="legend-color acceptable"></span>Acceptable</div>
 				<div class="legend-item"><span class="legend-color good"></span>Good</div>
@@ -702,8 +709,25 @@ frappe.require("https://cdn.jsdelivr.net/npm/chart.js", function(){
 				const ctx = document.getElementById("bellCurveChart");
 				const colors=["#ef5350","#f4b67a","#f4ef88","#9be084","#5cc46b"];
 				const labelsText=["Poor","Acceptable","Good","Very Good","Excellent"];
-				const points=[], labels=[];
-				for(let x=-3;x<=3;x+=0.1){ points.push(Math.exp(-0.5*Math.pow(x/1,2))); labels.push(x.toFixed(1)); }
+				// const points=[], labels=[];
+				// for(let x=-3;x<=3;x+=0.1){ points.push(Math.exp(-0.5*Math.pow(x/1,2))); labels.push(x.toFixed(1)); }
+				// Calculate Mean
+					let mean = scores.reduce((a,b)=>a+b,0) / scores.length;
+
+					// Calculate Standard Deviation
+					let variance = scores.reduce((a,b)=>a + Math.pow(b-mean,2),0) / scores.length;
+					let stdDev = Math.sqrt(variance);
+
+					const points = [];
+					const labels = [];
+
+					// Generate bell curve based on live data
+					for(let x=0; x<=5; x+=0.05){
+						let exponent = -Math.pow((x-mean),2) / (2*Math.pow(stdDev,2));
+						let y = (1/(stdDev*Math.sqrt(2*Math.PI))) * Math.exp(exponent);
+						points.push(y);
+						labels.push(x.toFixed(2));
+					}
 				const bellPlugin={id:"bellPlugin", afterDatasetsDraw(chart){
 					const {ctx, chartArea:{left,right,top,bottom,width,height}} = chart;
 					const meta = chart.getDatasetMeta(0);
