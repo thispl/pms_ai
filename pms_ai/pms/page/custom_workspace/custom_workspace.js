@@ -1202,10 +1202,7 @@ htmlBuffer += `
         <div id="aging-table-container" style="border-radius:8px;
              border:1px solid #e8eaf0; overflow:hidden;"></div>
     </div>
-</div>
-
-
-<div class="ai-insight-card" style="margin-top:10px;">
+    <div class="ai-insight-card" style="margin-top:20px;">
     <div class="ai-card-header">
         <h4>✨ Ageing Insights</h4>
         <button class="btn btn-sm btn-primary" id="btn-ai-ageing">Generate Insight</button>
@@ -1213,6 +1210,7 @@ htmlBuffer += `
     <div id="ai-content-ageing" class="ai-insight-content">
         Click Generate Insight for ageing bottleneck analysis.
     </div>
+</div>
 </div>`;
 
 // ── High Performers (score >= 3.5) ────────────────────────────────────
@@ -1379,7 +1377,18 @@ htmlBuffer += `
         <div id="low-perf-table" style="border-radius:8px;
              border:1px solid #e8eaf0; overflow:hidden;"></div>
     </div>
-</div>`;
+
+    <div class="ai-insight-card" style="margin-top:20px;">
+        <div class="ai-card-header">
+            <h4>✨ Performance Insights</h4>
+            <button class="btn btn-sm btn-primary" id="btn-ai-low-performance">Generate Insight</button>
+        </div>
+        <div id="ai-content-low-performance" class="ai-insight-content">
+            Click Generate Insight for low performance analysis.
+        </div>
+    </div>
+</div>
+`;
                 // ── Inject HTML ────────────────────────────────────────
                 $page.find("#dashboard-content").html(htmlBuffer);
                 // Render paginated tables
@@ -1550,9 +1559,13 @@ buildPaginatedTable('low-perf-table',  lowPerfRows,  perfColumns);
                         target_percentages: ["10%", "20%", "50%", "15%", "5%"]
                     });
                 });
-                 $page.find('#btn-ai-ageing').off('click').on('click', function() {
+                $page.find('#btn-ai-ageing').off('click').on('click', function() {
                     let payload = getAgeingInsightsData(rawData); 
                     fetch_ai_insights(this, 'ai-content-ageing', 'ageing_insights', payload);
+                });
+                $page.find('#btn-ai-low-performance').off('click').on('click', function() {
+                    let payload = lowPerfData;
+                    fetch_ai_insights(this, 'ai-content-low-performance', 'low_performance_insights', payload);
                 });
                 $page.find('#btn-ai-trend').on('click', function() {
                     fetch_ai_insights(this, 'ai-content-trend', 'daily_trend', {

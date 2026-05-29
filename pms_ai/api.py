@@ -128,7 +128,7 @@ def analyze_dashboard_chart(chart_context, chart_data):
     api_key = frappe.conf.get("gemini_api_key")
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
-    frappe.errprint(chart_context)
+    
     # Tell Gemini what context it is looking at based on the chart
     if chart_context == "completion_status":
         prompt_instruction = "Analyze the ratio of completed vs pending appraisals. Identify if the completion rate is healthy or if there are bottlenecks."
@@ -140,27 +140,120 @@ def analyze_dashboard_chart(chart_context, chart_data):
         prompt_instruction = "Analyze this 9-box talent matrix distribution. Identify if we have a healthy pipeline of future leaders (High Potential/Outstanding Perf) and note the risk of underperformers. Provide succession planning recommendations."
     elif chart_context == "ageing_insights":
         prompt_instruction = """
-            Analyze the appraisal ageing data and provide a concise executive summary in 1-2 paragraphs.
+            Analyze the appraisal ageing data and provide grouped HR action recommendations.
+
+            Objective:
+            - Do not generate employee-wise recommendations.
+            - Do not mention every employee individually.
+            - Identify common delay patterns and recommend bulk actions.
+            - Act as an HR Operations Advisor.
+
+            Focus on:
+            - Group employees by common issues such as workflow status, ageing range, unit, grade, or responsible role.
+            - Recommend actions for employee groups instead of individuals.
+            - Identify process bottlenecks causing appraisal delays.
+            - Suggest operational improvements to reduce ageing.
+            - Highlight only exceptional cases requiring immediate escalation.
+
+            Grouping rules:
+            - If multiple employees have the same status, combine them into one recommendation.
+            - If multiple units have similar issues, provide one common action.
+            - Mention employee names only for critical ageing outliers or severe escalation cases.
+            - Avoid repeating similar recommendations.
+
+            Decision guidance:
+            - Draft status:
+            Recommend automated reminders, completion deadlines, and manager follow-up.
+
+            - Pending for Assessor:
+            Recommend assessor reminders, SLA enforcement, and escalation workflow.
+
+            - Long ageing duration:
+            Recommend HR intervention and leadership escalation.
+
+            - Repeated delays:
+            Recommend process review, training, or workflow improvements.
 
             Requirements:
-            - Highlight important metrics, percentages, ageing values, statuses, units, grades, and risk indicators using <strong>HTML tags</strong>.
-            - Focus on key insights, bottlenecks, risks, and recommendations.
-            - Keep the response professional, concise, and actionable.
-            - Do not use headings, bullet points, markdown, tables, or code blocks.
-            - Return only plain HTML paragraphs using <p> tags.
-            - Emphasize critical findings and recommended actions.
+            - Return HTML bullet points using only <ul> and <li> tags.
+            - Generate maximum 5-7 bullet points.
+            - Each bullet must represent a unique recommendation.
+            - Highlight important statuses, units, risks, ageing groups, and actions using <strong>HTML tags</strong>.
+            - Do not list employees one by one.
+            - Do not duplicate similar suggestions.
+            - Keep recommendations concise, strategic, and actionable.
+            - Do not use markdown, headings, tables, or code blocks.
+        """
+    elif chart_context == "low_performance_insights":
+        prompt_instruction = """
+            Analyze the low performer data and provide grouped HR action recommendations.
+
+            Objective:
+            - Do not summarize employee counts or performance distribution.
+            - Do not generate employee-wise recommendations.
+            - Do not mention every employee individually.
+            - Act as an HR Performance Advisor and recommend improvement actions.
+
+            Focus on:
+            - Group employees by common performance issues such as performance band, score severity, unit, grade, or improvement requirement.
+            - Recommend actions for employee groups instead of individuals.
+            - Identify performance trends, capability gaps, and areas needing HR intervention.
+            - Suggest training, coaching, mentoring, role support, or performance improvement actions.
+            - Identify groups requiring re-evaluation before strict decisions.
+            - Highlight only critical performers requiring immediate attention.
+            - Provide practical next steps for HR managers and leadership.
+
+            Grouping rules:
+            - If multiple employees fall under the same performance category, combine them into one recommendation.
+            - If multiple departments have similar performance issues, provide one common improvement plan.
+            - Mention employee names only for extreme performance risks requiring urgent intervention.
+            - Avoid repeating the same recommendation for multiple employees.
+
+            Decision guidance:
+
+            - Immediate PIP:
+            Recommend structured Performance Improvement Plans, manager discussions,
+            root cause analysis, skill gap identification, coaching, and measurable improvement goals.
+            Recommend separation review only if there is no improvement after the PIP period.
+
+            - Review Required:
+            Recommend targeted training, mentoring, workload assessment,
+            manager feedback sessions, and performance re-evaluation.
+
+            - Monitor:
+            Recommend continuous observation, periodic check-ins,
+            feedback sessions, and preventive support.
+
+            - Department performance issues:
+            Recommend skill development programs, manager review,
+            resource evaluation, or process improvements.
+
+            Requirements:
+            - Return HTML bullet points using only <ul> and <li> tags.
+            - Generate maximum 5-7 bullet points.
+            - Each bullet must contain one unique HR recommendation.
+            - Highlight important bands, departments, risks, and actions using <strong>HTML tags</strong>.
+            - Do not list employees one by one.
+            - Do not duplicate similar suggestions.
+            - Focus on improvement actions, not reporting numbers.
+            - Keep recommendations professional, concise, and HR-oriented.
+            - Do not use markdown, headings, tables, or code blocks.
         """
         
     prompt = f"""
-    You are an HR Executive Analyst. 
-    
-    Task: {prompt_instruction}
-    
-    Data provided:
-    {json.dumps(data, indent=2)}
-    
-    Provide a concise, 2-paragraph analysis. Use a professional, consultative tone. 
-    Use bullet points if highlighting specific data points. Do not include introductory text like 'Here is the analysis', just output the insights.
+        You are a Senior HR Performance Consultant.
+
+        Task:
+        {prompt_instruction}
+
+        Employee performance data:
+        {json.dumps(data, indent=2)}
+
+        Output only HTML <ul><li> bullet points.
+        Provide actionable HR recommendations.
+        Do not summarize the dashboard.
+        Do not explain the data.
+        Focus on what should be done next for the employees.
     """
 
     try:
