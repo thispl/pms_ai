@@ -240,6 +240,60 @@ def analyze_dashboard_chart(chart_context, chart_data):
             - Do not use markdown, headings, tables, or code blocks.
         """
         
+    elif chart_context == "high_performance_insights":
+        prompt_instruction = """
+            Analyze the high performer data and provide grouped HR talent recommendations.
+
+            Objective:
+            - Do not summarize employee scores or ranking data.
+            - Do not generate employee-wise appreciation messages.
+            - Do not mention every employee individually.
+            - Act as an HR Talent Management Advisor and recommend actions for retaining and developing top performers.
+
+            Focus on:
+            - Group employees by common strengths such as performance band, score range, unit, grade, or leadership potential.
+            - Recommend actions for employee groups instead of individuals.
+            - Identify high-potential talent groups requiring recognition, growth opportunities, or career development.
+            - Suggest rewards, promotions, succession planning, mentoring roles, or leadership development programs.
+            - Highlight retention strategies for critical performers.
+            - Identify departments or grades showing strong performance capability.
+            - Recommend ways to use top performers to improve overall organizational performance.
+
+            Grouping rules:
+            - If multiple employees belong to the same high-performance category, combine them into one recommendation.
+            - If multiple units show strong performers, provide one common talent strategy.
+            - Mention employee names only for exceptional cases requiring leadership attention or succession planning.
+            - Avoid repeating similar recommendations.
+
+            Decision guidance:
+
+            - Exceptional performers:
+            Recommend recognition programs, career growth discussions,
+            leadership opportunities, succession planning, and retention actions.
+
+            - Consistent high performers:
+            Recommend advanced skill development, mentoring responsibilities,
+            challenging assignments, and future leadership preparation.
+
+            - High-performing units:
+            Recommend studying successful practices and sharing them across departments.
+
+            - Critical talent:
+            Recommend engagement discussions, retention planning,
+            and career progression opportunities.
+
+            Requirements:
+            - Return HTML bullet points using only <ul> and <li> tags.
+            - Generate maximum 5-7 bullet points.
+            - Each bullet must contain one unique HR recommendation.
+            - Highlight important bands, units, talent groups, opportunities, and actions using <strong>HTML tags</strong>.
+            - Do not list employees one by one.
+            - Do not duplicate similar suggestions.
+            - Focus on talent development actions, not reporting numbers.
+            - Keep recommendations professional, concise, and HR-oriented.
+            - Do not use markdown, headings, tables, or code blocks.
+        """
+        
     prompt = f"""
         You are a Senior HR Performance Consultant.
 

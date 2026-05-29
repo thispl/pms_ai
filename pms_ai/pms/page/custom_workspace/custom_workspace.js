@@ -1335,6 +1335,15 @@ htmlBuffer += `
         <div id="high-perf-table" style="border-radius:8px;
              border:1px solid #e8eaf0; overflow:hidden;"></div>
     </div>
+    <div class="ai-insight-card" style="margin-top:20px;">
+        <div class="ai-card-header">
+            <h4>✨ Performance Insights</h4>
+            <button class="btn btn-sm btn-primary" id="btn-ai-high-performance">Generate Insight</button>
+        </div>
+        <div id="ai-content-high-performance" class="ai-insight-content">
+            Click Generate Insight for high performance analysis.
+        </div>
+    </div>
 </div>
 
 <button class="collapsible-btn active"
@@ -1566,6 +1575,10 @@ buildPaginatedTable('low-perf-table',  lowPerfRows,  perfColumns);
                 $page.find('#btn-ai-low-performance').off('click').on('click', function() {
                     let payload = lowPerfData;
                     fetch_ai_insights(this, 'ai-content-low-performance', 'low_performance_insights', payload);
+                });
+                $page.find('#btn-ai-high-performance').off('click').on('click', function() {
+                    let payload = highPerfData;
+                    fetch_ai_insights(this, 'ai-content-high-performance', 'high_performance_insights', payload);
                 });
                 $page.find('#btn-ai-trend').on('click', function() {
                     fetch_ai_insights(this, 'ai-content-trend', 'daily_trend', {
