@@ -26,7 +26,8 @@ app_license = "mit"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/pms_ai/css/pms_ai.css"
-# app_include_js = "/assets/pms_ai/js/pms_ai.js"
+app_include_js = ["/assets/pms_ai/js/custom_workspace.js","/assets/pms_ai/js/desktop_redirect.js"]
+# login_redirect_url = "/app/pms-dashboard"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/pms_ai/css/pms_ai.css"
@@ -58,7 +59,7 @@ doctype_js = {
 # ----------
 
 # application home page (will override Website Settings)
-# home_page = "login"
+home_page = "desk/pms-dashboard"
 
 # website user home page (by Role)
 # role_home_page = {
@@ -135,23 +136,34 @@ doctype_js = {
 
 doc_events = {
 	"Appraisal": {
-		"validate": ["pms_ai.custom.update_appraisal_score","pms_ai.custom.update_appraisal_approved_date",
+		"validate": ["pms_ai.custom.update_appraisal_score","pms_ai.custom.update_appraisal_approved_date","pms_ai.custom.update_empty_fields_value",
 		"pms_ai.custom.update_appraisal_from_kra","pms_ai.custom.populate_objectives","pms_ai.custom.set_template_by_default"],
 		"on_submit": "pms_ai.custom.validate_total_score_for_assessor",		
-		"after_insert":["pms_ai.custom.update_appraisal_from_kra"]
+		"after_insert":["pms_ai.custom.update_appraisal_from_kra"],
+        "on_update":"pms_ai.custom.appraisal_rating_update",
+        "before_save":"pms_ai.public.py.appraisal.tracking_remarks"
+	},
+	"Appraisal Cycle":{
+		"validate":"pms_ai.custom.set_template_by_default_in_appraisal_cycle"
 	}
 }
 
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
+scheduler_events = {
 # 	"all": [
 # 		"pms_ai.tasks.all"
 # 	],
-# 	"daily": [
-# 		"pms_ai.tasks.daily"
-# 	],
+	"daily": [
+		"pms_ai.custom.update_overdue_appraisals",
+		'pms_ai.public.py.appraisal.self_assessment_pending_email_notification',
+		'pms_ai.public.py.appraisal.assessor_email_notification',
+		'pms_ai.public.py.appraisal.hr_incomplete_approval_email_notification',
+		'pms_ai.public.py.appraisal.hr_delayed_assessment_email_notification',
+		"pms_ai.pms.doctype.appraisal_settings.appraisal_settings.auto_lock_appraisals",
+		"pms_ai.pms.doctype.appraisal_settings.appraisal_settings.auto_publish_appraisals"
+	],
 # 	"hourly": [
 # 		"pms_ai.tasks.hourly"
 # 	],
@@ -161,7 +173,7 @@ doc_events = {
 # 	"monthly": [
 # 		"pms_ai.tasks.monthly"
 # 	],
-# }
+}
 
 # Testing
 # -------

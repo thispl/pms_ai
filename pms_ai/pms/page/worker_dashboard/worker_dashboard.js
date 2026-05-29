@@ -1,8 +1,8 @@
-frappe.pages['unit-dashboard'].on_page_load = function(wrapper) {
-    let WORKER_GRADES = ['A1', 'A2', 'A3', 'A4'];
+frappe.pages['worker-dashboard'].on_page_load = function(wrapper) {
+	const WORKER_GRADES   = ['A1','A2','A3','A4'];
     let page = frappe.ui.make_app_page({
         parent: wrapper,
-        title: 'Unit Appraisal Dashboard',
+        title: 'Worker Appraisal Dashboard',
         single_column: true,
         make_sidebar: null
     });
@@ -20,7 +20,6 @@ frappe.pages['unit-dashboard'].on_page_load = function(wrapper) {
     .ud-promo-kpi.pp-gold   { border-top-color:#f4a100; } .ud-promo-kpi.pp-gold   .pkv2 { color:#f4a100; }
     .ud-promo-kpi.pp-navy   { border-top-color:#0f1f3d; } .ud-promo-kpi.pp-navy   .pkv2 { color:#0f1f3d; }
     .ud-promo-kpi.pp-green  { border-top-color:#28a745; } .ud-promo-kpi.pp-green  .pkv2 { color:#28a745; }
-    .ud-promo-kpi.pp-orange  { border-top-color:#ff922b; } .ud-promo-kpi.pp-orange  .pkv2 { color:#ff922b; }
     .ud-promo-kpi.pp-red    { border-top-color:#C8102E; } .ud-promo-kpi.pp-red    .pkv2 { color:#C8102E; }
     .ud-promo-kpi.pp-purple { border-top-color:#7b1fa2; } .ud-promo-kpi.pp-purple .pkv2 { color:#7b1fa2; }
     .ud-promo-kpi.pp-teal   { border-top-color:#00796b; } .ud-promo-kpi.pp-teal   .pkv2 { color:#00796b; }
@@ -88,7 +87,7 @@ frappe.pages['unit-dashboard'].on_page_load = function(wrapper) {
     .ud-perf-panel.active { display:block; }
  
     .ud-perf-kpi-row {
-        display:grid; grid-template-columns:repeat(6,1fr);
+        display:grid; grid-template-columns:repeat(5,1fr);
         gap:10px; margin-bottom:16px;
     }
     .ud-perf-kpi {
@@ -98,7 +97,6 @@ frappe.pages['unit-dashboard'].on_page_load = function(wrapper) {
     .ud-perf-kpi.gold   { border-top-color:#f4a100; } .ud-perf-kpi.gold   .pkv { color:#f4a100; }
     .ud-perf-kpi.navy   { border-top-color:#0f1f3d; } .ud-perf-kpi.navy   .pkv { color:#0f1f3d; }
     .ud-perf-kpi.red    { border-top-color:#C8102E; } .ud-perf-kpi.red    .pkv { color:#C8102E; }
-    .ud-perf-kpi.orange    { border-top-color:#ff922b; } .ud-perf-kpi.orange    .pkv { color:#ff922b; }
     .ud-perf-kpi.green  { border-top-color:#28a745; } .ud-perf-kpi.green  .pkv { color:#28a745; }
     .ud-perf-kpi.purple { border-top-color:#7b1fa2; } .ud-perf-kpi.purple .pkv { color:#7b1fa2; }
     .pkv { font-size:22px; font-weight:700; line-height:1.1; color:#0f1f3d; }
@@ -572,10 +570,10 @@ frappe.pages['unit-dashboard'].on_page_load = function(wrapper) {
         <div class="ud-wrap" style="padding:16px;">
             <div class="ud-print-header">
                 <div class="ud-title-block">
-                    <div class="ud-title">Unit Appraisal Dashboard</div>
+                    <div class="ud-title">Worker Appraisal Dashboard</div>
                     <div class="ud-subtitle"></div>
                 </div>
-                <div class="ud-print-logo" style="font-size:11px;color:#C8102E;font-weight:700;">GALFAR</div>
+                <div class="ud-print-logo" style="font-size:11px;color:#C8102E;font-weight:700;">GALFAR — WORKER</div>
             </div>
             <div class="ud-filter-bar" id="ud-filters"></div>
             <div class="ud-unit-tabs" id="ud-unit-tabs">
@@ -651,7 +649,7 @@ function export_pdf() {
         // STEP 4: Set header info
         let unit = $('.ud-unit-tab.active').text().trim();
         let date = frappe.datetime.nowdate();
-        $('.ud-subtitle').text(`${unit} | Generated on ${date}`);
+        $('.ud-subtitle').text(`${unit} | Workers (A1–A4) | Generated on ${date}`);
 
         let originalTitle = document.title;
         document.title = `Unit Dashboard - ${unit} - ${date}`;
@@ -783,19 +781,6 @@ function export_pdf() {
             df: { label: 'To Date', fieldtype: 'Date', fieldname: 'to_date', change: () => debounced_reload() },
             parent: $page.find('#ud-filters'), render_input: true
         });
-        // After to_field is created:
-        let grade_filter_field = frappe.ui.form.make_control({
-            df: {
-                label: 'Employee Type',
-                fieldtype: 'Select',
-                fieldname: 'grade_filter',
-                options: '\nAll\nWorker (A1–A4)\nStaff',
-                change: () => debounced_reload()
-            },
-            parent: $page.find('#ud-filters'),
-            render_input: true
-        });
-        grade_filter_field.set_value('All', true);
 
         from_field.set_value(frappe.datetime.month_start(), true);
         to_field.set_value(frappe.datetime.month_end(), true);
@@ -812,7 +797,10 @@ function export_pdf() {
             args: {
                 doctype: 'Appraisal',
                 fields:  ['custom_unit'],
-                filters: [['docstatus', 'in', [0, 1]]],
+                 filters: [
+                    ['docstatus', 'in', [0, 1]],
+                    ['custom_grade', 'in', WORKER_GRADES]
+                ],
                 limit_page_length: 1000,
                 group_by: 'custom_unit'
             },
@@ -861,19 +849,15 @@ function export_pdf() {
 
             Object.values(chartInstances).forEach(c => { try { c.destroy(); } catch(e){} });
             chartInstances = {};
-            let gradeFilter = grade_filter_field.get_value() || 'All';
+
             let period = getHalfYearPeriod();
             let filters = [
                 ['docstatus', 'in', [0, 1]],
-                ['start_date', 'between', [period.start_date, period.end_date]]
+                ['start_date', 'between', [period.start_date, period.end_date]],
+                ['custom_grade', 'in', WORKER_GRADES]
             ];
             if (unit !== '__ALL__') filters.push(['custom_unit', '=', unit]);
-            
-            if (gradeFilter === 'Worker (A1–A4)') {
-                filters.push(['custom_grade', 'in', WORKER_GRADES]);
-            } else if (gradeFilter === 'Staff') {
-                filters.push(['custom_grade', 'not in', WORKER_GRADES]);
-            }
+
             frappe.call({
                 method: 'frappe.client.get_list',
                 args: {
@@ -885,7 +869,7 @@ function export_pdf() {
                         'custom_total_self_score', 'final_score',
                         'docstatus', 'start_date', 'modified',
                         'appraisal_cycle', 'appraisal_template',
-                        'custom_submitted_date', 'custom_self_approval_date', 'workflow_state','custom_appraisal_status','custom_rollout_date'
+                        'custom_submitted_date', 'custom_self_approval_date', 'workflow_state','custom_appraisal_status'
                     ],
                     filters: filters,
                     limit_page_length: 2000
@@ -899,10 +883,11 @@ function export_pdf() {
         // ── render_dashboard ───────────────────────────────────────────────────
         function render_dashboard(data, unit) {
 
+            const WORKER_GRADES   = ['A1','A2','A3','A4'];
             const isWorker        = g => WORKER_GRADES.includes((g||''));
             const BELL_LABELS     = ['E (Poor)','D (Acceptable)','C (Good)','B (Very Good)','A (Excellent)'];
             const BELL_TARGET_PCT = [0.05, 0.15, 0.50, 0.20, 0.10];
-            const BELL_COLORS     = ['#ED2D1E','#D97706','#F1D548','#9AC654','#4C8C32'];
+            const BELL_COLORS     = ['#e53935','#ffa726','#66bb6a','#42a5f5','#C8102E'];
 
             function bellBucket(s) {
                 let v = parseFloat(s) || 0;
@@ -936,8 +921,8 @@ function export_pdf() {
             let overdue    = data.filter(d => d.custom_appraisal_status == 'Overdue').length;
             let scored    = data.filter(d => parseFloat(d.total_score) > 0);
             let avgScore  = scored.length ? (scored.reduce((s,d) => s + parseFloat(d.total_score), 0) / scored.length).toFixed(2) : 'N/A';
-            let topPerf   = data.filter(d => parseFloat(d.total_score) > 3.5 && ['Approved','Accepted'].includes(d.workflow_state)).length;
-            let lowPerf   = data.filter(d => parseFloat(d.total_score) < 2.5 && ['Approved','Accepted'].includes(d.workflow_state)).length;
+            let topPerf   = scored.filter(d => parseFloat(d.total_score) > 3.5).length;
+            let lowPerf   = scored.filter(d => parseFloat(d.total_score) < 2.5).length;
 
             let unitMap = {};
             data.forEach(d => {
@@ -988,7 +973,7 @@ function export_pdf() {
                 let dep = d.custom_unit || 'Unknown';
                 if (!deptMap[dep]) deptMap[dep] = { total:0, completed:0,overdue:0 };
                 deptMap[dep].total++;
-                if (d.docstatus === 1 && ['Approved','Accepted'].includes(d.workflow_state)) deptMap[dep].completed++;
+                if (d.docstatus === 1) deptMap[dep].completed++;
                 if (d.custom_appraisal_status == "Overdue") deptMap[dep].overdue++;
             });
 
@@ -1004,23 +989,7 @@ function export_pdf() {
                 <div class="ud-kpi-card purple" id="ud-card-top">     <div class="kpi-val">${topPerf}</div>              <div class="kpi-lbl">Top Performers</div></div>
                 <div class="ud-kpi-card red"    id="ud-card-low">     <div class="kpi-val">${lowPerf}</div>              <div class="kpi-lbl">Low Performers</div></div>
             </div>`;
-            // At the top of render_dashboard, after computing workerRows/staffRows:
-            let gradeFilter   = grade_filter_field.get_value() || 'All';
 
-            let segmentBadge = '';
-            if (gradeFilter === 'Worker (A1–A4)') {
-                segmentBadge = `<div style="background:#0f1f3d;color:#fff;border-radius:6px;padding:6px 14px;
-                    font-size:11px;font-weight:700;display:inline-block;margin-bottom:12px;">
-                </div>`;
-            } else if (gradeFilter === 'Staff') {
-                segmentBadge = `<div style="background:#2d7a4f;color:#fff;border-radius:6px;padding:6px 14px;
-                    font-size:11px;font-weight:700;display:inline-block;margin-bottom:12px;">
-                </div>`;
-            } else {
-                segmentBadge = `<div style="background:#e9ecef;color:#495057;border-radius:6px;padding:6px 14px;
-                    font-size:11px;font-weight:700;display:inline-block;margin-bottom:12px;">
-                </div>`;
-            }
             // ── Completion Table ───────────────────────────────────────────────
             let compTableRows = Object.keys(unitMap).sort().map(u => {
                 let um   = unitMap[u];
@@ -1100,20 +1069,12 @@ function export_pdf() {
                     </div>
                     <div id="ud-comp-content" style="display:none;">
                         <div class="ud-2col" style="margin-bottom:16px;">
-                            <div>
-                                <div class="ud-chart-wrap" style="height:280px; position:relative;">
-                                    <canvas id="ud-kra-bar-chart"></canvas>
-                                    <div style="position:absolute; bottom:4px; right:8px;
-                                                font-size:10px; color:#aaa; pointer-events:none;">
-                                        🔍 Click to expand
-                                    </div>
-                                </div>
-                            </div>
+                            <div><div class="ud-chart-wrap" style="height:280px;"><canvas id="ud-kra-bar-chart"></canvas></div></div>
                             <div><div class="ud-chart-wrap" style="height:280px;"><canvas id="ud-kra-radar-chart"></canvas></div></div>
                         </div>
                         <div id="ud-kra-table" style="margin-top:4px;"></div>
                         <div id="ud-comp-perf-table" style="margin-top:4px;"></div>
-                    </div>
+                    </div>z
                     <div id="ud-comp-empty" style="display:none;padding:20px;text-align:center;color:#868e96;font-size:13px;"></div>
                 </div>
             </div>`;
@@ -1157,499 +1118,12 @@ function export_pdf() {
                     </table>
                 </div>`;
             }
-            
+
             let workerNA = workerRows.length - workerScored.length;
             let staffNA  = staffRows.length  - staffScored.length;
             let combNA   = data.length       - scored.length;
-            $('head').append(`<style id="ud-ninebox-styles">
-            .ud-9box-section-grid {
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 0;
-                margin-bottom: 16px;
-                border: 2px solid #dee2e6;
-                border-radius: 10px;
-                overflow: hidden;
-            }
-            .ud-9box-section-cell {
-                padding: 14px 10px;
-                text-align: center;
-                cursor: pointer;
-                border: 1px solid #dee2e6;
-                transition: opacity .15s;
-                min-height: 90px;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-            }
-            .ud-9box-section-cell:hover { opacity: .85; }
-            .ud-9box-section-cell .nbc-code  { font-size: 11px; font-weight: 700; opacity: .75; margin-bottom: 4px; }
-            .ud-9box-section-cell .nbc-label { font-size: 10px; font-weight: 600; line-height: 1.4; }
-            .ud-9box-section-cell .nbc-count { font-size: 22px; font-weight: 700; margin-top: 6px; }
 
-            /* Row 1 — High Potential */
-            
-            .nb-1c  { background: #1976d2 !important; color: #ffffff  !important; border: 1px solid #1976d2 !important; }
-            .nb-1b  { background: #ef5350 !important; color: #ffffff  !important; border: 1px solid #ef5350 !important; }
-            .nb-1a  { background: #2ecc71 !important; color: #ffffff  !important; border: 1px solid #2ecc71 !important; }
-            .nb-2c  { background: #fb8c00 !important; color: #ffffff  !important; border: 1px solid #fb8c00 !important; }
-            .nb-2b  { background: #42a5f5 !important; color: #ffffff  !important; border: 1px solid #42a5f5 !important; }
-            .nb-2a  { background: #fb8c00 !important; color: #ffffff  !important; border: 1px solid #fb8c00 !important; }
-            .nb-3c  { background: #546e7a !important; color: #ffffff  !important; border: 1px solid #546e7a !important; }
-            .nb-3b  { background: #ffa726 !important; color: #ffffff  !important; border: 1px solid #ffa726 !important; }
-            .nb-3a  { background: #1e88e5 !important; color: #ffffff  !important; border: 1px solid #1e88e5 !important; }
-            
-            .ud-9box-axis-y {
-                writing-mode: vertical-rl;
-                transform: rotate(180deg);
-                font-size: 11px; font-weight: 700;
-                color: #0f1f3d; letter-spacing: 1px;
-                text-transform: uppercase;
-                display: flex; align-items: center; justify-content: center;
-                padding: 0 6px;
-            }
-            .ud-9box-axis-x {
-                display: flex; justify-content: space-around;
-                font-size: 11px; font-weight: 700;
-                color: #0f1f3d; text-transform: uppercase;
-                letter-spacing: .5px; margin-top: 6px; padding: 0 4px;
-            }
-
-            .ud-9box-detail-panel {
-                margin-top: 14px;
-                background: #f8f9fa;
-                border-radius: 8px;
-                padding: 14px;
-                display: none;
-            }
-
-            @media print {
-                .ud-9box-section-grid { page-break-inside: avoid !important; }
-            }
-            </style>`);
-            // ═══════════════════════════════════════════════════════════════
-//  9-BOX TALENT MATRIX
-// ═══════════════════════════════════════════════════════════════
-
-// Performance band: based on total_score
-function nb_perfBand(d) {
-    let s = parseFloat(d.total_score) || 0;
-    if (s >= 4.0) return 'outstanding';   // col 3 (A)
-    if (s >= 2.5) return 'good';          // col 2 (B)
-    return 'poor';                        // col 1 (C)
-}
-
-// Potential band: based on self–assessor alignment + grade seniority
-function nb_potBand(d) {
-    let a    = parseFloat(d.total_score) || 0;
-    let s    = parseFloat(d.custom_total_self_score) || 0;
-    let delta = a - s;
-    let g    = (d.custom_grade || '').toLowerCase();
-    let senior = ['s','l','m'].some(p => g.startsWith(p)) ||
-                 ['senior','lead','manager','head','supervisor','director'].some(k => g.includes(k));
-    let pts = 0;
-    if (a >= 4.0)      pts += 2;
-    else if (a >= 3.0) pts += 1;
-    if (delta >= 0.5)  pts += 2;
-    else if (delta >= 0) pts += 1;
-    if (senior)        pts += 1;
-    if (pts >= 4) return 'high';
-    if (pts >= 2) return 'medium';
-    return 'low';
-}
-
-// Map to box key: box{pot}{perf}  e.g. box1a = high potential + outstanding performance
-const NB_PERF_MAP = { outstanding: 'a', good: 'b', poor: 'c' };
-const NB_POT_MAP  = { high: '1', medium: '2', low: '3' };
-
-let nbBoxMap = {};
-['1a','1b','1c','2a','2b','2c','3a','3b','3c'].forEach(k => { nbBoxMap[k] = []; });
-
-let nbScored = data.filter(d => parseFloat(d.total_score) > 0);
-nbScored.forEach(d => {
-    let perf = nb_perfBand(d);
-    let pot  = nb_potBand(d);
-    let key  = NB_POT_MAP[pot] + NB_PERF_MAP[perf];
-    nbBoxMap[key].push(d);
-});
-
-const NB_CELLS = [
-    { key:'1c', cls:'nb-1c', code:'1C', label:'Poor Perf<br>High Potential'        },
-    { key:'1b', cls:'nb-1b', code:'1B', label:'Good Perf<br>High Potential'        },
-    { key:'1a', cls:'nb-1a', code:'1A', label:'Outstanding Perf<br>High Potential' },
-    { key:'2c', cls:'nb-2c', code:'2C', label:'Poor Perf<br>Moderate Potential'    },
-    { key:'2b', cls:'nb-2b', code:'2B', label:'Good Perf<br>Moderate Potential'    },
-    { key:'2a', cls:'nb-2a', code:'2A', label:'Outstanding Perf<br>Moderate Potential' },
-    { key:'3c', cls:'nb-3c', code:'3C', label:'Poor Perf<br>Limited Potential'     },
-    { key:'3b', cls:'nb-3b', code:'3B', label:'Good Perf<br>Limited Potential'     },
-    { key:'3a', cls:'nb-3a', code:'3A', label:'Outstanding Perf<br>Limited Potential' },
-];
-
-let nbGridHtml = NB_CELLS.map(cell => `
-    <div class="ud-9box-section-cell ${cell.cls}"
-         onclick="ud_show9BoxDetail('${cell.key}')">
-        <div class="nbc-code">${cell.code}</div>
-        <div class="nbc-label">${cell.label}</div>
-        <div class="nbc-count">${nbBoxMap[cell.key].length}</div>
-    </div>`).join('');
-
-    // KPI summary row for 9-box
-    let nbStars    = nbBoxMap['1a'].length;
-    let nbHiPos    = nbBoxMap['1b'].length + nbBoxMap['2a'].length;
-    let nbAtRisk   = nbBoxMap['3c'].length;
-    let nbEnigmas  = nbBoxMap['1c'].length;
-
-let nineBoxHtml = `
-<div class="ud-section">
-    <div class="ud-section-header ud-toggle" data-target="ud-body-ninebox">
-        <h4>🗂 9-Box Talent Matrix — ${unitLabel}</h4>
-        <span class="ud-toggle-icon">▼</span>
-    </div>
-    <div class="ud-section-body ud-collapsible-body" id="ud-body-ninebox">
-
-        
-
-       
-
-        <!-- 2-column layout: left=matrix, right=detail -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start;">
-
-            <!-- LEFT: 9-box matrix -->
-            <div style="display:flex;gap:8px;align-items:stretch;">
-
-                <!-- Y-axis label -->
-                <div style="display:flex;align-items:center;justify-content:center;width:22px;">
-                    <div style="writing-mode:vertical-rl;transform:rotate(180deg);
-                                font-size:11px;font-weight:700;color:#0f1f3d;
-                                text-transform:uppercase;letter-spacing:1.5px;
-                                white-space:nowrap;">
-                        Leadership Potential ↑
-                    </div>
-                </div>
-
-                <!-- Grid + X-axis -->
-                <div style="flex:1;">
-                    <div style="
-                        display:grid;
-                        grid-template-columns:repeat(3,1fr);
-                        grid-template-rows:repeat(3,150px);
-                        gap:6px;
-                        margin-bottom:8px;
-                    ">
-                        ${NB_CELLS.map(cell => `
-                        <div class="ud-9box-section-cell ${cell.cls}"
-                             style="height:150px;padding:12px 8px;
-                                    display:flex;flex-direction:column;
-                                    align-items:center;justify-content:center;
-                                    border-radius:8px;cursor:pointer;
-                                    border:2px solid rgba(255,255,255,0.3);
-                                    box-shadow:0 2px 6px rgba(0,0,0,.10);
-                                    transition:transform .15s, box-shadow .15s;
-                                    -webkit-print-color-adjust:exact;print-color-adjust:exact;"
-                             onmouseover="this.style.transform='scale(1.04)';this.style.boxShadow='0 6px 18px rgba(0,0,0,.18)';"
-                             onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 2px 6px rgba(0,0,0,.10)';"
-                             onclick="ud_show9BoxDetail('${cell.key}')">
-                            <div style="font-size:11px;font-weight:700;opacity:.75;margin-bottom:3px;">
-                                ${cell.code}
-                            </div>
-                            <div style="font-size:10px;font-weight:600;line-height:1.4;text-align:center;opacity:.85;">
-                                ${cell.label}
-                            </div>
-                            <div style="font-size:28px;font-weight:700;margin-top:8px;line-height:1;">
-                                ${nbBoxMap[cell.key].length}
-                            </div>
-                        </div>`).join('')}
-                    </div>
-
-                    <!-- X-axis labels -->
-                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:4px;">
-                        <div style="text-align:center;font-size:10px;font-weight:700;color:#495057;
-                                    background:#f8f9fa;border-radius:4px;padding:4px 0;">Poor</div>
-                        <div style="text-align:center;font-size:10px;font-weight:700;color:#495057;
-                                    background:#f8f9fa;border-radius:4px;padding:4px 0;">Good</div>
-                        <div style="text-align:center;font-size:10px;font-weight:700;color:#495057;
-                                    background:#f8f9fa;border-radius:4px;padding:4px 0;">Outstanding</div>
-                    </div>
-                    <div style="text-align:center;font-size:11px;font-weight:700;
-                                color:#0f1f3d;text-transform:uppercase;letter-spacing:.5px;margin-top:4px;">
-                        Past Performance →
-                    </div>
-                </div>
-            </div>
-
-            <!-- RIGHT: Detail panel -->
-            <div id="ud-9box-detail-panel"
-     style="background:#f8f9fa;border-radius:10px;padding:18px;
-            border:1px solid #e9ecef;
-            height:100%;min-height:498px;
-            display:flex;flex-direction:column;justify-content:flex-start;">
-                <div id="ud-9box-detail-content"
-                     style="color:#adb5bd;font-size:13px;text-align:center;">
-                    <div style="font-size:40px;margin-bottom:10px;">🗂</div>
-                    <div style="font-weight:600;color:#868e96;margin-bottom:6px;">No Box Selected</div>
-                    Click any cell on the left to view the employees in that segment.
-                </div>
-            </div>
-
-        </div>
-
-    </div>
-</div>`;
-window.ud_show9BoxDetail = function(key) {
-    let employees = nbBoxMap[key] || [];
-    let panel     = document.getElementById('ud-9box-detail-panel');
-    let content   = document.getElementById('ud-9box-detail-content');
-    if (!panel || !content) return;
-
-    let cellInfo  = NB_CELLS.find(c => c.key === key);
-    let labelText = cellInfo
-        ? cellInfo.code + ' — ' + cellInfo.label.replace('<br>', ' / ')
-        : key;
-
-    // ── Empty state ──────────────────────────────────────────────────────
-    if (!employees.length) {
-        content.innerHTML = `
-            <div style="text-align:center;color:#adb5bd;font-size:13px;padding:40px 0;">
-                <div style="font-size:28px;margin-bottom:8px;">📭</div>
-                No employees in box <strong>${labelText}</strong>
-            </div>`;
-        return;
-    }
-
-    // ── Pagination config ────────────────────────────────────────────────
-    const PAGE_SIZE = 10;
-    let currentPage = 0;
-    const totalPages = Math.ceil(employees.length / PAGE_SIZE);
-
-    // ── Row builder ──────────────────────────────────────────────────────
-    function buildRows(page) {
-        let start = page * PAGE_SIZE;
-        let end   = Math.min(start + PAGE_SIZE, employees.length);
-        return employees.slice(start, end).map(d => {
-            let s    = parseFloat(d.total_score);
-            let self = parseFloat(d.custom_total_self_score) || 0;
-            let barW = Math.min(100, Math.round((s / 5) * 100));
-            let barColor = s >= 4 ? '#f4a100' : s >= 3 ? '#28a745' : s >= 2 ? '#ffc107' : '#C8102E';
-            return `<tr>
-                <td>
-                    <div style="font-weight:700;font-size:12px;">${d.employee_name || d.employee}</div>
-                    <div style="font-size:10px;color:#868e96;">${d.employee}</div>
-                </td>
-                <td><span class="ud-badge ud-badge-blue">${d.custom_grade || '—'}</span></td>
-                <td style="font-size:11px;">${d.custom_unit || '—'}</td>
-                <td>
-                    <div style="display:flex;align-items:center;gap:5px;">
-                        <div style="flex:1;height:6px;background:#e9ecef;border-radius:3px;overflow:hidden;">
-                            <div style="width:${barW}%;height:100%;background:${barColor};border-radius:3px;
-                                        -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
-                        </div>
-                        <span style="font-size:10px;font-weight:700;min-width:28px;color:${barColor};">
-                            ${s.toFixed(2)}
-                        </span>
-                    </div>
-                </td>
-                <td style="text-align:center;font-size:11px;color:#868e96;">
-                    ${self ? self.toFixed(2) : '—'}
-                </td>
-                <td>
-                    ${['Approved','Accepted'].includes(d.workflow_state)
-                        ? '<span class="ud-badge ud-badge-green">✓ Done</span>'
-                        : d.custom_appraisal_status === 'Overdue'
-                            ? '<span class="ud-badge ud-badge-red">Overdue</span>'
-                            : '<span class="ud-badge ud-badge-orange">Pending</span>'}
-                </td>
-                <td>
-                    <button class="ud-perf-action ud-act-view"
-                        onclick="frappe.set_route('Form','Appraisal','${d.name}')">View</button>
-                </td>
-            </tr>`;
-        }).join('');
-    }
-
-    // ── Pagination controls renderer ─────────────────────────────────────
-    function renderPagination(page) {
-        let start = page * PAGE_SIZE + 1;
-        let end   = Math.min((page + 1) * PAGE_SIZE, employees.length);
-        return `
-        <div style="display:flex;align-items:center;justify-content:space-between;
-                    padding:8px 10px;border-top:1px solid #e9ecef;
-                    background:#f8f9fa;border-radius:0 0 6px 6px;">
-            <button id="nb-pg-prev"
-                ${page === 0 ? 'disabled' : ''}
-                style="padding:4px 12px;font-size:11px;font-weight:700;
-                       border:1px solid #dee2e6;border-radius:4px;
-                       background:${page === 0 ? '#f8f9fa' : '#fff'};
-                       color:${page === 0 ? '#adb5bd' : '#495057'};
-                       cursor:${page === 0 ? 'not-allowed' : 'pointer'};">
-                ◀ Prev
-            </button>
-            <span style="font-size:11px;color:#868e96;">
-                Showing <strong>${start}–${end}</strong> of <strong>${employees.length}</strong>
-                &nbsp;·&nbsp; Page <strong>${page + 1}</strong> of <strong>${totalPages}</strong>
-            </span>
-            <button id="nb-pg-next"
-                ${page >= totalPages - 1 ? 'disabled' : ''}
-                style="padding:4px 12px;font-size:11px;font-weight:700;
-                       border:1px solid #dee2e6;border-radius:4px;
-                       background:${page >= totalPages - 1 ? '#f8f9fa' : '#fff'};
-                       color:${page >= totalPages - 1 ? '#adb5bd' : '#495057'};
-                       cursor:${page >= totalPages - 1 ? 'not-allowed' : 'pointer'};">
-                Next ▶
-            </button>
-        </div>`;
-    }
-
-    // ── Full panel render ────────────────────────────────────────────────
-    function renderPanel(page) {
-        content.innerHTML = `
-
-            <!-- Header -->
-            <div style="display:flex;justify-content:space-between;align-items:center;
-                        margin-bottom:10px;flex-wrap:wrap;gap:6px;">
-                <div>
-                    <div style="font-size:13px;font-weight:700;color:#0f1f3d;">${labelText}</div>
-                    <div style="font-size:11px;color:#868e96;margin-top:2px;">
-                        ${employees.length} employee${employees.length !== 1 ? 's' : ''} in this segment
-                    </div>
-                </div>
-                <button id="nb-clear-btn"
-                    style="background:none;border:1px solid #dee2e6;border-radius:6px;
-                           padding:4px 10px;font-size:11px;cursor:pointer;color:#868e96;">
-                    ✕ Clear
-                </button>
-            </div>
-
-            <!-- Table wrapper with sticky header -->
-            <div style="border:1px solid #e9ecef;border-radius:6px;overflow:hidden;">
-                <div style="overflow-y:auto;max-height:340px;">
-                    <table class="ud-table" style="font-size:11px;width:100%;">
-                        <thead>
-                            <tr>
-                                <th style="position:sticky;top:0;z-index:5;
-                                           background:#0f1f3d;color:#fff;
-                                           -webkit-print-color-adjust:exact;
-                                           print-color-adjust:exact;
-                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Employee</th>
-                                <th style="position:sticky;top:0;z-index:5;
-                                           background:#0f1f3d;color:#fff;
-                                           -webkit-print-color-adjust:exact;
-                                           print-color-adjust:exact;
-                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Grade</th>
-                                <th style="position:sticky;top:0;z-index:5;
-                                           background:#0f1f3d;color:#fff;
-                                           -webkit-print-color-adjust:exact;
-                                           print-color-adjust:exact;
-                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Unit</th>
-                                <th style="position:sticky;top:0;z-index:5;
-                                           background:#0f1f3d;color:#fff;min-width:120px;
-                                           -webkit-print-color-adjust:exact;
-                                           print-color-adjust:exact;
-                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Score</th>
-                                <th style="position:sticky;top:0;z-index:5;text-align:center;
-                                           background:#0f1f3d;color:#fff;
-                                           -webkit-print-color-adjust:exact;
-                                           print-color-adjust:exact;
-                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Self</th>
-                                <th style="position:sticky;top:0;z-index:5;
-                                           background:#0f1f3d;color:#fff;
-                                           -webkit-print-color-adjust:exact;
-                                           print-color-adjust:exact;
-                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Status</th>
-                                <th style="position:sticky;top:0;z-index:5;
-                                           background:#0f1f3d;color:#fff;
-                                           -webkit-print-color-adjust:exact;
-                                           print-color-adjust:exact;
-                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody id="nb-table-body">
-                            ${buildRows(page)}
-                        </tbody>
-                    </table>
-                </div>
-
-                <!-- Pagination bar (only shown if > PAGE_SIZE) -->
-                ${employees.length > PAGE_SIZE ? renderPagination(page) : ''}
-            </div>`;
-
-        // ── Bind buttons after innerHTML is set ──────────────────────────
-        let prevBtn = document.getElementById('nb-pg-prev');
-        let nextBtn = document.getElementById('nb-pg-next');
-        let clearBtn = document.getElementById('nb-clear-btn');
-
-        if (prevBtn) {
-            prevBtn.addEventListener('click', function() {
-                if (currentPage > 0) {
-                    currentPage--;
-                    document.getElementById('nb-table-body').innerHTML = buildRows(currentPage);
-                    // Re-render pagination controls
-                    let pg = content.querySelector('#nb-pg-prev').closest('div');
-                    pg.outerHTML = renderPagination(currentPage);
-                    bindPagination();
-                }
-            });
-        }
-
-        if (nextBtn) {
-            nextBtn.addEventListener('click', function() {
-                if (currentPage < totalPages - 1) {
-                    currentPage++;
-                    document.getElementById('nb-table-body').innerHTML = buildRows(currentPage);
-                    let pg = content.querySelector('#nb-pg-prev').closest('div');
-                    pg.outerHTML = renderPagination(currentPage);
-                    bindPagination();
-                }
-            });
-        }
-
-        if (clearBtn) {
-            clearBtn.addEventListener('click', function() {
-                content.innerHTML = `
-                    <div style="text-align:center;color:#adb5bd;font-size:13px;padding:40px 0;">
-                        <div style="font-size:40px;margin-bottom:10px;">🗂</div>
-                        <div style="font-weight:600;color:#868e96;margin-bottom:6px;">No Box Selected</div>
-                        Click any cell on the left to view the employees in that segment.
-                    </div>`;
-            });
-        }
-    }
-
-    // ── Pagination rebind helper ──────────────────────────────────────────
-    function bindPagination() {
-        let prevBtn  = document.getElementById('nb-pg-prev');
-        let nextBtn  = document.getElementById('nb-pg-next');
-
-        if (prevBtn) {
-            prevBtn.addEventListener('click', function() {
-                if (currentPage > 0) {
-                    currentPage--;
-                    document.getElementById('nb-table-body').innerHTML = buildRows(currentPage);
-                    let pg = content.querySelector('#nb-pg-prev').closest('div');
-                    pg.outerHTML = renderPagination(currentPage);
-                    bindPagination();
-                }
-            });
-        }
-        if (nextBtn) {
-            nextBtn.addEventListener('click', function() {
-                if (currentPage < totalPages - 1) {
-                    currentPage++;
-                    document.getElementById('nb-table-body').innerHTML = buildRows(currentPage);
-                    let pg = content.querySelector('#nb-pg-prev').closest('div');
-                    pg.outerHTML = renderPagination(currentPage);
-                    bindPagination();
-                }
-            });
-        }
-    }
-
-    // ── Initial render ───────────────────────────────────────────────────
-    renderPanel(0);
-};
-    // ── Bell Curve Section ─────────────────────────────────────────────
+            // ── Bell Curve Section ─────────────────────────────────────────────
             // NOTE: All 3 panels are visible in DOM (no display:none) — hidden via CSS class for screen only
             let bellHtml = `
             <div class="ud-section">
@@ -1657,16 +1131,15 @@ window.ud_show9BoxDetail = function(key) {
                     <h4>🔔 Bell Curve Distribution — ${unitLabel}</h4>
                     <div style="display:flex;align-items:center;gap:8px;" onclick="event.stopPropagation();">
                         <div class="ud-bell-tab-bar">
-                            <button class="ud-bell-tab-btn active-combined" data-bell="combined">👥 Combined</button>
-                            <button class="ud-bell-tab-btn" data-bell="worker">🔧 Worker</button>
-                            <button class="ud-bell-tab-btn" data-bell="staff">💼 Staff</button>
+							<button class="ud-bell-tab-btn active-combined" data-bell="combined">👥 Worker</button>
+
                         </div>
                         <span class="ud-toggle-icon" style="margin-left:8px;">▼</span>
                     </div>
                 </div>
                 <div class="ud-collapsible-body" id="ud-body-bell">
                     <div class="ud-bell-panel" id="ud-bell-panel-combined">
-                        ${bellSectionInnerHtml('combined','👥 Combined Bell Curve — Worker + Staff','#0f1f3d',_combTarget,_combCounts,combNA)}
+                        ${bellSectionInnerHtml('combined','Bell Curve','#0f1f3d',_workerTarget,_workerCounts,workerNA)}
                     </div>
                     <div class="ud-bell-panel ud-bell-panel-hidden" id="ud-bell-panel-worker">
                         ${bellSectionInnerHtml('worker','🔧 Worker Bell Curve — Grades A1 to A4','#C8102E',_workerTarget,_workerCounts,workerNA)}
@@ -1678,24 +1151,20 @@ window.ud_show9BoxDetail = function(key) {
             </div>`;
             
 // ── Segment the scored data ───────────────────────────────────────────────
-let perfScored     = data.filter(d => parseFloat(d.total_score) >= 0);
+let perfScored     = data.filter(d => parseFloat(d.total_score) > 0);
 let perfTopList    = [...perfScored]
-    .filter(d => parseFloat(d.total_score) >= 4.0 && ['Approved','Accepted'].includes(d.workflow_state))
+    .filter(d => parseFloat(d.total_score) >= 4.0)
     .sort((a, b) => parseFloat(b.total_score) - parseFloat(a.total_score));
 let perfStrongList = [...perfScored]
-    .filter(d => parseFloat(d.total_score) >= 3.5 && parseFloat(d.total_score) < 4.0 && ['Approved','Accepted'].includes(d.workflow_state))
+    .filter(d => parseFloat(d.total_score) >= 3.5 && parseFloat(d.total_score) < 4.0)
     .sort((a, b) => parseFloat(b.total_score) - parseFloat(a.total_score));
 let perfLowList    = [...perfScored]
-    .filter(d => parseFloat(d.total_score) < 2.5 && ['Approved','Accepted'].includes(d.workflow_state))
+    .filter(d => parseFloat(d.total_score) < 2.5)
     .sort((a, b) => parseFloat(a.total_score) - parseFloat(b.total_score));
 let perfCritical   = perfLowList.filter(d => parseFloat(d.total_score) <= 2.0);
 let perfAvgScoreVal = perfScored.length
     ? (perfScored.reduce((s, d) => s + parseFloat(d.total_score), 0) / perfScored.length).toFixed(2)
     : 'N/A';
-let perfMiddleList = [...perfScored]
-    .filter(d => parseFloat(d.total_score) >= 2.5 
-              && parseFloat(d.total_score) < 3.5 && ['Approved','Accepted'].includes(d.workflow_state))
-    .sort((a, b) => parseFloat(b.total_score) - parseFloat(a.total_score));
  
 // ── Per-unit heatmap data ─────────────────────────────────────────────────
 let perfUnitHeat = {};
@@ -1728,11 +1197,11 @@ let heatRows = Object.keys(perfUnitHeat).sort().map(u => {
     let lp  = Math.round(((h.e + h.d) / h.total) * 100);
     return `<tr>
         <td style="font-weight:700;padding:8px 10px;border-bottom:1px solid #e9ecef;">${u}</td>
-        ${heatCell(h.e, h.total, '#ED2D1E')}
-        ${heatCell(h.d, h.total, '#D97706')}
-        ${heatCell(h.c, h.total, '#F1D548')}
-        ${heatCell(h.b, h.total, '#9AC654')}
-        ${heatCell(h.a, h.total, '#4C8C32')}
+        ${heatCell(h.e, h.total, '#e53935')}
+        ${heatCell(h.d, h.total, '#ffa726')}
+        ${heatCell(h.c, h.total, '#66bb6a')}
+        ${heatCell(h.b, h.total, '#42a5f5')}
+        ${heatCell(h.a, h.total, '#C8102E')}
         <td style="font-weight:700;padding:8px 10px;border-bottom:1px solid #e9ecef;">${avg}</td>
         <td style="padding:8px 10px;border-bottom:1px solid #e9ecef;">
             <span class="ud-badge" style="background:rgba(244,161,0,.15);color:#c68a00;">${tp}%</span>
@@ -1802,38 +1271,6 @@ let strongTableRows = perfStrongList.map((d, i) => {
     </tr>`;
 }).join('') || `<tr><td colspan="11" style="text-align:center;padding:20px;color:#adb5bd;">No strong performers (3.5–4.0) found</td></tr>`;
  
-
-// ── Middle performers 2.5–3.5 ─────────────────────────────────────────────
-let MiddleTableRows = perfMiddleList.map((d, i) => {
-    let band = perfBand(d.total_score);
-    frappe.open_in_new_tab = true;
-    return `<tr>
-        <td>${perfRankBadge(i)}</td>
-        <td>
-            <div style="font-weight:700;font-size:12px;">${d.employee_name || d.employee}</div>
-            <div style="font-size:10px;color:#868e96;">${d.employee}</div>
-        </td>
-        <td><span class="ud-badge ud-badge-blue">${d.custom_grade || '—'}</span></td>
-        <td style="font-size:11px;">${d.custom_unit || '—'}</td>
-        <td style="font-size:11px;">${d.custom_division || '—'}</td>
-        <td style="text-align:center;font-weight:700;font-size:14px;color:#f4a100;">
-            ${parseFloat(d.total_score).toFixed(2)}
-        </td>
-        <td style="text-align:center;font-size:11px;">
-            ${d.custom_total_self_score ? parseFloat(d.custom_total_self_score).toFixed(2) : '—'}
-        </td>
-        <td>${perfScoreBar(d.total_score, '#f4a100')}</td>
-        <td><span class="ud-badge ${band.cls}">${band.label}</span></td>
-        <td>${perfStatusBadge(d)}</td>
-        <td>
-            
-            <button class="ud-perf-action ud-act-view"
-                onclick="frappe.set_route('Form','Appraisal','${d.name}')">View</button>
-        </td>
-    </tr>`;
-}).join('') || `<tr><td colspan="11" style="text-align:center;padding:20px;color:#adb5bd;">No top performers (≥ 4.0) found</td></tr>`;
- 
-
 // ── Succession / retention risk rows ─────────────────────────────────────
 let retentionAtRisk = [...perfTopList, ...perfStrongList].filter(d => {
     return perfRetentionRisk(d) !== 'l';
@@ -1945,10 +1382,6 @@ let pipBannerText = perfCritical.length
                 <div class="pkv">${perfStrongList.length}</div>
                 <div class="pkl">Strong Performers 3.5–4.0</div>
             </div>
-            <div class="ud-perf-kpi orange" id="udp-kpi-middle" style="cursor:pointer;" title="Open Middle Performers list">
-                <div class="pkv">${perfMiddleList.length}</div>
-                <div class="pkl">Middle Performers 2.5–3.5</div>
-            </div>
             <div class="ud-perf-kpi red" id="udp-kpi-low" style="cursor:pointer;" title="Open Low Performers list">
                 <div class="pkv">${perfLowList.length}</div>
                 <div class="pkl">Low Performers &lt; 2.5</div>
@@ -1981,13 +1414,6 @@ let pipBannerText = perfCritical.length
             <div class="ud-perf-tab"
                 onclick="(function(el){
                     el.closest('#ud-body-performers').querySelectorAll('.ud-perf-tab').forEach(t=>{t.className='ud-perf-tab';});
-                    el.classList.add('pt-top');
-                    el.closest('#ud-body-performers').querySelectorAll('.ud-perf-panel').forEach(p=>p.classList.remove('active'));
-                    el.closest('#ud-body-performers').querySelector('#udp-middle').classList.add('active');
-                })(this)">🔶 Middle Performers (${perfMiddleList.length})</div>
-            <div class="ud-perf-tab"
-                onclick="(function(el){
-                    el.closest('#ud-body-performers').querySelectorAll('.ud-perf-tab').forEach(t=>{t.className='ud-perf-tab';});
                     el.classList.add('pt-low');
                     el.closest('#ud-body-performers').querySelectorAll('.ud-perf-panel').forEach(p=>p.classList.remove('active'));
                     el.closest('#ud-body-performers').querySelector('#udp-low').classList.add('active');
@@ -2000,16 +1426,16 @@ let pipBannerText = perfCritical.length
                 Score band distribution per unit. Cell color intensifies with higher concentration.
                 Bands: E ≤1.0 | D 1–2 | C 2–3 | B 3–4 | A ≥4
             </div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-heat-tbl">
                     <thead>
                         <tr>
                             <th style="text-align:left;width:140px;">Unit</th>
-                            <th style="background:#ED2D1E;">E ≤1.0</th>
-                            <th style="background:#D97706;color:#333;">D 1–2</th>
-                            <th style="background:#F1D548;">C 2–3</th>
-                            <th style="background:#9AC654;">B 3–4</th>
-                            <th style="background:#4C8C32;">A ≥4</th>
+                            <th style="background:#e53935;">E ≤1.0</th>
+                            <th style="background:#ffa726;color:#333;">D 1–2</th>
+                            <th style="background:#66bb6a;">C 2–3</th>
+                            <th style="background:#42a5f5;">B 3–4</th>
+                            <th style="background:#C8102E;">A ≥4</th>
                             <th>Avg Score</th>
                             <th>Top % (A)</th>
                             <th>Low % (D+E)</th>
@@ -2070,8 +1496,6 @@ let pipBannerText = perfCritical.length
                     <tbody>${strongTableRows}</tbody>
                 </table>
             </div>
-
-            
  
             <!-- Succession & Retention Risk -->
             <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin:0 0 8px;">
@@ -2081,7 +1505,7 @@ let pipBannerText = perfCritical.length
                 <div class="pbb-title">⚠ Retention Watch</div>
                 <div>${retBannerText}</div>
             </div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Employee</th>
@@ -2097,34 +1521,6 @@ let pipBannerText = perfCritical.length
                 </table>
             </div>
         </div>
-
-
-        <div class="ud-perf-panel" id="udp-middle">
-
-            <!-- middle Performers ≥ 2.5 and < 3.5 -->
-            <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin:0 0 8px;">
-                🥇 Middle Performers — Score ≤ 3.5 and ≥ 4.0 
-                <span style="font-size:11px;font-weight:400;color:#868e96;margin-left:8px;">(${perfMiddleList.length} employees)</span>
-            </div>
-            <div style="overflow-x:auto;margin-bottom:22px;">
-                <table class="ud-table">
-                    <thead><tr>
-                        <th style="width:36px;">#</th>
-                        <th>Employee</th>
-                        <th>Grade</th>
-                        <th>Unit</th>
-                        <th>Division</th>
-                        <th style="text-align:center;">Score</th>
-                        <th style="text-align:center;">Self Score</th>
-                        <th style="min-width:120px;">Score Bar</th>
-                        <th>Band</th>
-                        <th>Status</th>
-                        <th>Action</th>
-                    </tr></thead>
-                    <tbody>${MiddleTableRows}</tbody>
-                </table>
-            </div>
-            </div>
  
         <!-- ══════════════ PANEL 3: Low Performers ══════════════ -->
         <div class="ud-perf-panel" id="udp-low">
@@ -2164,7 +1560,7 @@ let pipBannerText = perfCritical.length
             <!-- <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin:0 0 8px;">
                 📋 Performance Improvement Plan (PIP) Tracker
             </div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Employee</th>
@@ -2451,7 +1847,7 @@ let complianceHtml = `
                 <div class="ckl">Policy Deviations</div>
             </div>
             <div class="ud-comp-dash-kpi c-navy">
-                <div class="ckv">${unitsNotStarted}</div>
+              
                 <div class="ckl">Units Not Started</div>
             </div>
             <div class="ud-comp-dash-kpi c-green">
@@ -2514,25 +1910,23 @@ let complianceHtml = `
                  ${data.filter(d => d.custom_appraisal_status==='Overdue').length} are overdue.
                  Review and remediate urgently.</div>
         </div>
-<div class="ud-table-scroll-wrap" style="overflow-x:auto;">
-    <table class="ud-table">
-        <thead><tr>
-            <th>Employee</th>
-            <th>Unit</th>
-            <th>Division</th>
-            <th>Grade</th>
-            <th>Violations</th>
-            <th>Action</th>
-        </tr></thead>
-        <tbody id="ud-policy-dev-tbody"></tbody>
-    </table>
-</div>
-<div id="ud-policy-dev-pagination" style="display:none;align-items:center;justify-content:space-between;padding:10px 4px;margin-top:4px;border-top:1px solid #e9ecef;">
-    <button id="ud-pd-prev" style="padding:5px 14px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;cursor:pointer;color:#495057;">◀ Prev</button>
-    <span id="ud-pd-page-info" style="font-size:12px;color:#868e96;"></span>
-    <button id="ud-pd-next" style="padding:5px 14px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;cursor:pointer;color:#495057;">Next ▶</button>
-</div>
-${policyDeviations.length > 50 ? `<div style="text-align:center;padding:8px;font-size:11px;color:#868e96;">Showing max 200 of ${policyDeviations.length} violations</div>` : ''}`}
+        <div style="overflow-x:auto;">
+            <table class="ud-table">
+                <thead><tr>
+                    <th>Employee</th>
+                    <th>Unit</th>
+                    <th>Division</th>
+                    <th>Grade</th>
+                    <th>Violations</th>
+                    <th>Action</th>
+                </tr></thead>
+                <tbody>${policyDevRows}</tbody>
+            </table>
+        </div>
+        ${policyDeviations.length > 50 ? `
+        <div style="text-align:center;padding:8px;font-size:11px;color:#868e96;">
+            Showing 50 of ${policyDeviations.length} violations
+        </div>` : ''}`}
     </div>
 </div>`;
  
@@ -2784,7 +2178,7 @@ let calibrationHtml = `
         <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin-bottom:8px;">
             📊 Biggest Calibration Shifts — Top 30 by Absolute Δ
         </div>
-        <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+        <div style="overflow-x:auto;">
             <table class="ud-table">
                 <thead><tr>
                     <th>Employee</th>
@@ -2804,64 +2198,7 @@ let calibrationHtml = `
 // ─────────────────────────────────────────────────────────────────────────────
 //  SECTION C: PERFORMANCE vs COMPENSATION
 // ─────────────────────────────────────────────────────────────────────────────
-$('head').append(`<style id="ud-sticky-header-styles">
-/* ── Sticky table headers for scrollable sections ── */
 
-/* Wrapper that creates the scrollable viewport */
-.ud-table-scroll-wrap {
-    overflow-y: auto;
-    max-height: 520px;
-    border: 1px solid #e9ecef;
-    border-radius: 6px;
-}
-
-/* Make thead sticky inside any scrollable wrapper */
-.ud-table-scroll-wrap .ud-table thead th,
-.ud-table-scroll-wrap .ud-table thead tr th {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: #0f1f3d !important;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-    /* Prevent header gap/bleed on scroll */
-    box-shadow: 0 2px 4px rgba(0,0,0,.15);
-}
-
-/* For kra-group-header rows that also appear in thead-like rows */
-.ud-table-scroll-wrap .ud-table tr.kra-group-header td {
-    position: sticky;
-    top: 41px; /* offset by thead height */
-    z-index: 9;
-}
-
-/* Scrollbar styling */
-.ud-table-scroll-wrap::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-.ud-table-scroll-wrap::-webkit-scrollbar-track {
-    background: #f1f1f1;
-    border-radius: 3px;
-}
-.ud-table-scroll-wrap::-webkit-scrollbar-thumb {
-    background: #c1c1c1;
-    border-radius: 3px;
-}
-.ud-table-scroll-wrap::-webkit-scrollbar-thumb:hover {
-    background: #a8a8a8;
-}
-
-@media print {
-    .ud-table-scroll-wrap {
-        overflow: visible !important;
-        max-height: none !important;
-    }
-    .ud-table-scroll-wrap .ud-table thead th {
-        position: static !important;
-    }
-}
-</style>`);
 $('head').append(`<style id="ud-pvc-styles">
     .ud-pvc-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:16px; }
     .ud-pvc-kpi  { background:#fff; border-radius:8px; padding:12px 14px; text-align:center;
@@ -3142,7 +2479,7 @@ let perfCompHtml = `
                 (Top 50 by score)
             </span>
         </div>
-        <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+        <div style="overflow-x:auto;">
             <table class="ud-table">
                 <thead><tr>
                     <th>Employee</th>
@@ -3300,7 +2637,7 @@ let eligPanelHtml = `
             (${promoStrong.length + promoReady.length + promoWatch.length} employees shown)
         </span>
     </div>
-    <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+    <div style="overflow-x:auto;">
         <table class="ud-table">
             <thead><tr>
                 <th style="width:36px;">#</th>
@@ -3428,7 +2765,7 @@ let leniencyPanelHtml = `
     <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin-bottom:8px;">
         📋 Unit-wise Leniency / Stringency Detail
     </div>
-    <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+    <div style="overflow-x:auto;">
         <table class="ud-table">
             <thead><tr>
                 <th>Unit</th>
@@ -3592,7 +2929,7 @@ let delayedPanelHtml = `
             (${delayedEmployees.length} total, showing up to 60)
         </span>
     </div>
-    <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+    <div style="overflow-x:auto;">
         <table class="ud-table">
             <thead><tr>
                 <th>Employee</th>
@@ -3727,7 +3064,7 @@ let calibVarPanelHtml = `
     <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin-bottom:8px;">
         📋 Unit-wise Calibration Variance Detail
     </div>
-    <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+    <div style="overflow-x:auto;">
         <table class="ud-table">
             <thead><tr>
                 <th>Unit</th>
@@ -3839,7 +3176,6 @@ let arUnitRows = Object.keys(arUnitMap).sort().map(u => {
     let sAvg = au.staffScores.length
         ? au.staffScores.reduce((a,b)=>a+b,0)/au.staffScores.length : null;
     let top  = au.scores.filter(s=>s>=4.0).length;
-    let middle = au.scores.filter(s => s >= 2.5 && s < 4.0).length;
     let low  = au.scores.filter(s=>s<2.5).length;
     let diff = avg - arPopAvg;
     let diffStyle = diff > 0.2 ? 'color:#28a745;font-weight:700'
@@ -3866,7 +3202,6 @@ let arUnitRows = Object.keys(arUnitMap).sort().map(u => {
             ${sAvg!=null ? `<span style="font-weight:700;color:#1565c0;">${sAvg.toFixed(2)}</span>` : '<span style="color:#adb5bd;">—</span>'}
         </td>
         <td style="text-align:center;font-weight:700;color:#f4a100;">${top}</td>
-        <td style="text-align:center;font-weight:700;color:#ffd166;">${middle}</td>
         <td style="text-align:center;font-weight:700;color:#C8102E;">${low}</td>
     </tr>`;
 }).join('') || `<tr><td colspan="10" style="text-align:center;padding:20px;color:#adb5bd;">No scored appraisals</td></tr>`;
@@ -3884,9 +3219,6 @@ let arGradeRows = Object.keys(arGradeMap).sort().map(g => {
         <td style="text-align:center;">${n}</td>
         <td>${_spkBar(avg, barHex)}</td>
         <td style="text-align:center;font-weight:700;color:#f4a100;">${ag.scores.filter(s=>s>=4).length}</td>
-        <td style="text-align:center;font-weight:700;color:#ffd166;">
-            ${ag.scores.filter(s => s >= 2.5 && s < 4).length}
-        </td>
         <td style="text-align:center;font-weight:700;color:#C8102E;">${ag.scores.filter(s=>s<2.5).length}</td>
     </tr>`;
 }).join('') || `<tr><td colspan="6" style="text-align:center;padding:20px;color:#adb5bd;">No data</td></tr>`;
@@ -3950,7 +3282,7 @@ let avgRatingHtml = `
                     Worker = Grades A1–A4 · Staff = all other grades.
                 </div>
             </div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Unit</th>
@@ -3962,7 +3294,6 @@ let avgRatingHtml = `
                         <th style="text-align:center;color:#7b1fa2;">Worker Avg</th>
                         <th style="text-align:center;color:#1565c0;">Staff Avg</th>
                         <th style="text-align:center;color:#f4a100;">Top (≥4)</th>
-                        <th style="text-align:center;color:#ffd166;">Middle (≥2.5 - &lt4)</th>
                         <th style="text-align:center;color:#C8102E;">Low (&lt;2.5)</th>
                     </tr></thead>
                     <tbody>${arUnitRows}</tbody>
@@ -3971,7 +3302,7 @@ let avgRatingHtml = `
         </div>
 
         <div class="ud-ns-panel" id="udar-grade">
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Grade</th>
@@ -3979,7 +3310,6 @@ let avgRatingHtml = `
                         <th style="text-align:center;">Count</th>
                         <th>Avg Score</th>
                         <th style="text-align:center;color:#f4a100;">Top (≥4)</th>
-                        <th style="text-align:center;color:#ffd166;">Middle (≥2.5 - &lt4)</th>
                         <th style="text-align:center;color:#C8102E;">Low (&lt;2.5)</th>
                     </tr></thead>
                     <tbody>${arGradeRows}</tbody>
@@ -4025,10 +3355,10 @@ let avgRatingHtml = `
 
 // Only pending/incomplete appraisals
 let agingList = data
-    .filter(d => !['Approved', 'Accepted', 'Cancelled'].includes(d.workflow_state))
+    .filter(d => !['Approved','Accepted'].includes(d.workflow_state))
     .map(d => {
-        let days = _daysSince(d.custom_rollout_date);           // ← was: now_date() (always 0)
-        let startDays = _daysSince(d.custom_rollout_date);
+        let days = _daysSince(d.modified);
+        let startDays = _daysSince(d.start_date);
         return { d, days: days || 0, startDays: startDays || 0 };
     })
     .sort((a, b) => b.days - a.days);
@@ -4206,33 +3536,32 @@ let agingHtml = `
             <div class="ud-ns-tab" data-ag="cycle">📅 By Cycle</div>
         </div>
 
-<div class="ud-ns-panel active" id="udag-emp">
-    <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
-        <table class="ud-table" style="width:100%;">
-            <thead><tr>
-                <th>Employee</th>
-                <th>Grade</th>
-                <th>Unit</th>
-                <th>Division</th>
-                <th style="text-align:center;">Pending Days</th>
-                <th style="text-align:center;">Severity</th>
-                <th>State</th>
-                <th>Cycle</th>
-                <th>Current Score</th>
-                <th>Action</th>
-            </tr></thead>
-            <tbody id="ud-ag-emp-tbody"></tbody>
-        </table>
-    </div>
-    <div id="ud-ag-emp-pagination" style="display:none;flex;align-items:center;justify-content:space-between;padding:10px 4px;margin-top:4px;border-top:1px solid #e9ecef;">
-        <button id="ud-ag-prev" style="padding:5px 14px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;cursor:pointer;color:#495057;">◀ Prev</button>
-        <span id="ud-ag-page-info" style="font-size:12px;color:#868e96;"></span>
-        <button id="ud-ag-next" style="padding:5px 14px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;cursor:pointer;color:#495057;">Next ▶</button>
-    </div>
-</div>
+        <div class="ud-ns-panel active" id="udag-emp">
+            <div style="overflow-x:auto;">
+                <table class="ud-table">
+                    <thead><tr>
+                        <th>Employee</th>
+                        <th>Grade</th>
+                        <th>Unit</th>
+                        <th>Division</th>
+                        <th style="text-align:center;">Pending Days</th>
+                        <th style="text-align:center;">Severity</th>
+                        <th>State</th>
+                        <th>Cycle</th>
+                        <th>Current Score</th>
+                        <th>Action</th>
+                    </tr></thead>
+                    <tbody>${agEmpRows}</tbody>
+                </table>
+                ${agingList.length > 80
+                    ? `<div style="text-align:center;padding:8px;font-size:11px;color:#868e96;">
+                           Showing 80 of ${agingList.length} pending appraisals
+                       </div>` : ''}
+            </div>
+        </div>
 
         <div class="ud-ns-panel" id="udag-unit">
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Unit</th>
@@ -4250,7 +3579,7 @@ let agingHtml = `
         </div>
 
         <div class="ud-ns-panel" id="udag-cycle">
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Appraisal Cycle</th>
@@ -4566,7 +3895,7 @@ let assessorEffHtml = `
                     </div>
                 </div>
             </div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Unit</th>
@@ -4612,7 +3941,7 @@ let assessorEffHtml = `
                     </div>
                 </div>
             </div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Unit</th>
@@ -4687,7 +4016,7 @@ let assessorEffHtml = `
                     (${aeDelayed2.length} total · showing 60)
                 </span>
             </div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Employee</th><th>Grade</th><th>Unit</th>
@@ -4729,7 +4058,7 @@ let assessorEffHtml = `
                     </div>
                 </div>
             </div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Unit</th>
@@ -4788,7 +4117,7 @@ let assessorEffHtml = `
                 Roles are inferred from appraisal templates and grade bands.
                 Readiness is derived from score tier and appraisal completion.
             </div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-role-tbl" id="ud-role-table">
                     <thead><tr>
                         <th>Critical Category</th>
@@ -4836,153 +4165,14 @@ let assessorEffHtml = `
 $page.find('#ud-main').html(
     kpiHtml +
     completionHtml +
-    trendHtml +
-    // (frappe.user.has_role("Projects Manager") ? "" : compHtml) +
-    compHtml +
-    nineBoxHtml+
     bellHtml +
     performerHtml +
-    // (frappe.user.has_role("Projects Manager") ? "" : histHtml) +
-    histHtml+
-    avgRatingHtml +
     agingHtml +
-    assessorEffHtml +
-    // (frappe.user.has_role("Projects Manager") ? "" : calibrationHtml) +
-    calibrationHtml +
     complianceHtml +
-    perfCompHtml +
-    // (frappe.user.has_role("Projects Manager") ? "" : perfCompHtml) +
-    perfCompHtml+
-    promotionEligibilityHtml +
-    successionReadinessHtml +
     ldHtml
 );
-// ── Apply sticky headers to all overflow tables globally ─────────────────
-$page.find('#ud-main').find('[style*="overflow-x:auto"]').each(function() {
-    let $wrap = $(this);
-    // Only wrap if it contains a ud-table with more than 10 rows
-    let rowCount = $wrap.find('.ud-table tbody tr').length;
-    if (rowCount > 10 && !$wrap.hasClass('ud-table-scroll-wrap')) {
-        $wrap.addClass('ud-table-scroll-wrap');
-    }
-});
-// ── Aging report employee table pagination ────────────────────────────────
-(function() {
-    const AG_PAGE_SIZE = 10;
-    let agCurrentPage = 0;
 
-    function buildAgEmpRow(item) {
-        let d = item.d, days = item.days;
-        let s = parseFloat(d.total_score);
-        return `<tr>
-            <td>
-                <div style="font-weight:700;font-size:12px;">${d.employee_name||d.employee}</div>
-                <div style="font-size:10px;color:#868e96;">${d.employee}</div>
-            </td>
-            <td><span class="ud-badge ud-badge-blue">${d.custom_grade||'—'}</span></td>
-            <td style="font-size:11px;">${d.custom_unit||'—'}</td>
-            <td style="font-size:11px;">${d.custom_division||'—'}</td>
-            <td style="text-align:center;font-weight:700;color:#C8102E;">${days}d</td>
-            <td style="text-align:center;">${agingChip(days)}</td>
-            <td>${_statBadge(d)}</td>
-            <td style="font-size:11px;">${d.appraisal_cycle||'—'}</td>
-            <td>${s > 0 ? _spkBar(s,'#0f1f3d') : '<span style="color:#adb5bd;font-size:11px;">Not scored</span>'}</td>
-            <td>
-                <button class="ud-perf-action ud-act-view"
-                    onclick="frappe.set_route('Form','Appraisal','${d.name}')">View</button>
-            </td>
-        </tr>`;
-    }
 
-    const agTbody   = document.getElementById('ud-ag-emp-tbody');
-    const agPagDiv  = document.getElementById('ud-ag-emp-pagination');
-    const agPrev    = document.getElementById('ud-ag-prev');
-    const agNext    = document.getElementById('ud-ag-next');
-    const agInfo    = document.getElementById('ud-ag-page-info');
-
-    if (!agTbody) return;
-
-    function renderAgPage(page) {
-        const total      = agingList.length;
-        const totalPages = Math.ceil(total / AG_PAGE_SIZE) || 1;
-        const start      = page * AG_PAGE_SIZE;
-        const end        = Math.min(start + AG_PAGE_SIZE, total);
-
-        agTbody.innerHTML = agingList.length
-            ? agingList.slice(start, end).map(item => buildAgEmpRow(item)).join('')
-            : `<tr><td colspan="10" style="text-align:center;padding:20px;color:#adb5bd;">All appraisals are completed</td></tr>`;
-
-        if (agInfo) agInfo.textContent = total > AG_PAGE_SIZE
-            ? `Page ${page + 1} of ${totalPages}  (${start + 1}–${end} of ${total})`
-            : `${total} record${total !== 1 ? 's' : ''}`;
-
-        if (agPagDiv) agPagDiv.style.display = total > AG_PAGE_SIZE ? 'flex' : 'none';
-        if (agPrev)  { agPrev.disabled = page === 0; agPrev.onclick = () => renderAgPage(agCurrentPage - 1); }
-        if (agNext)  { agNext.disabled = page >= totalPages - 1; agNext.onclick = () => renderAgPage(agCurrentPage + 1); }
-        agCurrentPage = page;
-    }
-
-    renderAgPage(0);
-})();
-
-// ── Policy deviations table pagination ───────────────────────────────────
-(function() {
-    const PD_PAGE_SIZE = 10;
-    let pdCurrentPage = 0;
-
-    function buildPdRow({ d, issues }) {
-        let chips = issues.map(i =>
-            `<span class="ud-policy-chip ${i.cls}">${i.type}</span>`
-        ).join(' ');
-        return `<tr>
-            <td>
-                <div style="font-weight:700;font-size:12px;">${d.employee_name||d.employee}</div>
-                <div style="font-size:10px;color:#868e96;">${d.employee}</div>
-            </td>
-            <td style="font-size:11px;">${d.custom_unit||'—'}</td>
-            <td style="font-size:11px;">${d.custom_division||'—'}</td>
-            <td><span class="ud-badge ud-badge-blue">${d.custom_grade||'—'}</span></td>
-            <td>${chips}</td>
-            <td>
-                <button class="ud-perf-action ud-act-view"
-                    onclick="frappe.set_route('Form','Appraisal','${d.name}')">View</button>
-            </td>
-        </tr>`;
-    }
-
-    const pdTbody  = document.getElementById('ud-policy-dev-tbody');
-    const pdPagDiv = document.getElementById('ud-policy-dev-pagination');
-    const pdPrev   = document.getElementById('ud-pd-prev');
-    const pdNext   = document.getElementById('ud-pd-next');
-    const pdInfo   = document.getElementById('ud-pd-page-info');
-
-    if (!pdTbody) return;
-
-    // Use full policyDeviations array (not sliced to 50)
-    const allDeviations = policyDeviations; // already built above
-
-    function renderPdPage(page) {
-        const total      = allDeviations.length;
-        const totalPages = Math.ceil(total / PD_PAGE_SIZE) || 1;
-        const start      = page * PD_PAGE_SIZE;
-        const end        = Math.min(start + PD_PAGE_SIZE, total);
-
-        pdTbody.innerHTML = total
-            ? allDeviations.slice(start, end).map(item => buildPdRow(item)).join('')
-            : `<tr><td colspan="6" style="text-align:center;padding:20px;color:#adb5bd;">No policy deviations detected</td></tr>`;
-
-        if (pdInfo) pdInfo.textContent = total > PD_PAGE_SIZE
-            ? `Page ${page + 1} of ${totalPages}  (${start + 1}–${end} of ${total})`
-            : `${total} violation${total !== 1 ? 's' : ''}`;
-
-        if (pdPagDiv) pdPagDiv.style.display = total > PD_PAGE_SIZE ? 'flex' : 'none';
-        if (pdPrev)  { pdPrev.disabled = page === 0; pdPrev.onclick = () => renderPdPage(pdCurrentPage - 1); }
-        if (pdNext)  { pdNext.disabled = page >= totalPages - 1; pdNext.onclick = () => renderPdPage(pdCurrentPage + 1); }
-        pdCurrentPage = page;
-    }
-
-    renderPdPage(0);
-})();
 // ─────────────────────────────────────────────────────────────────────────────
 //  STEP 3: ADD CHART RENDERS (paste after existing chart renders)
 //  These go inside render_dashboard(), after the bell curve charts.
@@ -5124,15 +4314,7 @@ if ($page.find('#ud-ar-toplw-bar').length) {
         data: {
             labels: arUk,
             datasets: [
-                { label:'Top ≥4.0', data: arUk.map(u=>arUnitMap[u].scores.filter(s=>s>=4).length), backgroundColor:'#f4a100', borderRadius:4, borderWidth:0 },                {
-                    label:'Middle 2.5–4.0',
-                    data: arUk.map(u =>
-                        arUnitMap[u].scores.filter(s => s >= 2.5 && s < 4).length
-                    ),
-                    backgroundColor:'#ffd166',
-                    borderRadius:4,
-                    borderWidth:0
-                },
+                { label:'Top ≥4.0', data: arUk.map(u=>arUnitMap[u].scores.filter(s=>s>=4).length), backgroundColor:'#f4a100', borderRadius:4, borderWidth:0 },
                 { label:'Low <2.5', data: arUk.map(u=>arUnitMap[u].scores.filter(s=>s<2.5).length), backgroundColor:'#C8102E', borderRadius:4, borderWidth:0 },
             ]
         },
@@ -5806,16 +4988,6 @@ if ($page.find('#ud-pvc-unit-bar').length && Object.keys(pvcUnitMap).length > 0)
             });
 
             let deptKeys = Object.keys(deptMap).sort();
-            console.log(
-                deptKeys.map(k => ({
-                    dept: k,
-                    completed: deptMap[k].completed,
-                    total: deptMap[k].total,
-                    overdue: deptMap[k].overdue,
-                    completedPct: pct(deptMap[k].completed, deptMap[k].total)
-                }))
-            );
-
             mkChart('ud-dept-bar-chart', {
                 type: 'bar',
                 data: {
@@ -5918,9 +5090,8 @@ if ($page.find('#ud-pvc-unit-bar').length && Object.keys(pvcUnitMap).length > 0)
             _renderBell = renderBell;
 
             // Render all three bells immediately (all canvases exist in DOM)
-            renderBell('combined', _combTarget,   _combCounts);
-            renderBell('worker',   _workerTarget, _workerCounts);
-            renderBell('staff',    _staffTarget,  _staffCounts);
+            // renderBell('worker',   _workerTarget, _workerCounts);
+			renderBell('combined', _workerTarget,   _workerCounts);
 
             // ── Bell tab switcher ──────────────────────────────────────────────
             let bellColorMap = { combined:'#0f1f3d', worker:'#C8102E', staff:'#2d7a4f' };
@@ -5981,10 +5152,8 @@ if ($page.find('#ud-pvc-unit-bar').length && Object.keys(pvcUnitMap).length > 0)
                         // ── Competency breakdown: top vs low performers ───────────────────────
 let topNames    = new Set(perfTopList.map(d => d.name).concat(perfStrongList.map(d => d.name)));
 let lowNames    = new Set(perfLowList.map(d => d.name));
-let middleNames    = new Set(perfMiddleList.map(d => d.name));
 
 let kraTopAgg = {}, kraLowAgg = {};
-let kraMiddleAgg = {};
 goalData.forEach(function(row) {
     let n = (row.kra || 'Unknown').trim();
     if (topNames.has(row.parent)) {
@@ -5993,55 +5162,35 @@ goalData.forEach(function(row) {
         kraTopAgg[n].selfSum += parseFloat(row.custom_self_score) || 0;
         kraTopAgg[n].assrSum += parseFloat(row.custom_assessor_score) || 0;
     }
-    else if (lowNames.has(row.parent)) {
+    if (lowNames.has(row.parent)) {
         if (!kraLowAgg[n]) kraLowAgg[n] = { total:0, selfSum:0, assrSum:0 };
         kraLowAgg[n].total++;
         kraLowAgg[n].selfSum += parseFloat(row.custom_self_score) || 0;
         kraLowAgg[n].assrSum += parseFloat(row.custom_assessor_score) || 0;
     }
-    else if (middleNames.has(row.parent)) {
-        if (!kraMiddleAgg[n]) kraMiddleAgg[n] = { total:0, selfSum:0, assrSum:0 };
-        kraMiddleAgg[n].total++;
-        kraMiddleAgg[n].selfSum += parseFloat(row.custom_self_score) || 0;
-        kraMiddleAgg[n].assrSum += parseFloat(row.custom_assessor_score) || 0;
-    }
 });
 
 // Build comparison summary cards (top 5 KRAs by assessor score gap)
-let allKras = [...new Set([...Object.keys(kraTopAgg), ...Object.keys(kraLowAgg), ...Object.keys(kraMiddleAgg),])];
+let allKras = [...new Set([...Object.keys(kraTopAgg), ...Object.keys(kraLowAgg)])];
 let kraGapRows = allKras.map(n => {
     let tAvg = kraTopAgg[n] && kraTopAgg[n].total
         ? (kraTopAgg[n].assrSum / kraTopAgg[n].total) : 0;
-    let mAvg = kraMiddleAgg[n] && kraMiddleAgg[n].total
-        ? (kraMiddleAgg[n].assrSum / kraMiddleAgg[n].total)
-        : 0;
     let lAvg = kraLowAgg[n] && kraLowAgg[n].total
         ? (kraLowAgg[n].assrSum / kraLowAgg[n].total) : 0;
     let gap  = tAvg - lAvg;
-    return { name: n, tAvg, mAvg, lAvg, gap };
+    return { name: n, tAvg, lAvg, gap };
 }).sort((a, b) => b.gap - a.gap);
 
 let compSummaryRows = kraGapRows.map(r => {
     let tW   = Math.min(100, Math.round((r.tAvg / 5) * 100));
-    let mW   = Math.min(100, Math.round((r.mAvg / 5) * 100));
     let lW   = Math.min(100, Math.round((r.lAvg / 5) * 100));
     let gapCls = r.gap >= 1.5 ? 'ud-badge-red' : r.gap >= 0.5 ? 'ud-badge-orange' : 'ud-badge-green';
     return `<tr>
-        <td style="font-weight:600;font-size:11px;">${(r.name).toUpperCase()}</td>
+        <td style="font-weight:600;font-size:11px;">${r.name}</td>
         <td>
             <div style="display:flex;align-items:center;gap:6px;">
                 <div class="ud-prog" style="flex:1;"><div class="ud-prog-fill" style="width:${tW}%;background:#f4a100;"></div></div>
                 <span style="font-size:10px;font-weight:700;color:#f4a100;min-width:28px;">${r.tAvg.toFixed(2)}</span>
-            </div>
-        </td>
-        <td>
-            <div style="display:flex;align-items:center;gap:6px;">
-                <div class="ud-prog" style="flex:1;">
-                    <div class="ud-prog-fill" style="width:${mW}%;background:#28a745;"></div>
-                </div>
-                <span style="font-size:10px;font-weight:700;color:#28a745;min-width:28px;">
-                    ${r.mAvg ? r.mAvg.toFixed(2) : '0.00'}
-                </span>
             </div>
         </td>
         <td>
@@ -6054,7 +5203,7 @@ let compSummaryRows = kraGapRows.map(r => {
             <span class="ud-badge ${gapCls}">${r.gap >= 0 ? '+' : ''}${r.gap.toFixed(2)}</span>
         </td>
     </tr>`;
-}).join('') || `<tr><td colspan="5" style="text-align:center;padding:16px;color:#adb5bd;">No competency data for this segment</td></tr>`;
+}).join('') || `<tr><td colspan="4" style="text-align:center;padding:16px;color:#adb5bd;">No competency data for this segment</td></tr>`;
 
 $page.find('#ud-comp-perf-table').html(`
     <div style="margin-top:18px;">
@@ -6064,19 +5213,12 @@ $page.find('#ud-comp-perf-table').html(`
                 Assessor score avg · sorted by gap (highest first)
             </span>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;">
             <div style="background:#fff8e1;border-radius:8px;padding:12px 14px;border-top:3px solid #f4a100;text-align:center;">
                 <div style="font-size:18px;font-weight:700;color:#f4a100;">${perfTopList.length + perfStrongList.length}</div>
                 <div style="font-size:10px;font-weight:600;color:#868e96;text-transform:uppercase;letter-spacing:1px;margin-top:3px;">Top &amp; Strong</div>
                 <div style="font-size:10px;color:#adb5bd;margin-top:2px;">
                     Avg: ${kraGapRows.length ? (kraGapRows.reduce((s,r)=>s+r.tAvg,0)/kraGapRows.length).toFixed(2) : 'N/A'} / 5
-                </div>
-            </div>
-            <div style="background:#fff4e6;border-radius:8px;padding:12px 14px;border-top:3px solid #ff922b;text-align:center;">
-                <div style="font-size:18px;font-weight:700;color:#ff922b;">${perfMiddleList.length}</div>
-                <div style="font-size:10px;font-weight:600;color:#868e96;text-transform:uppercase;letter-spacing:1px;margin-top:3px;">Middle Performers</div>
-                <div style="font-size:10px;color:#adb5bd;margin-top:2px;">
-                    Avg: ${kraGapRows.length ? (kraGapRows.reduce((s,r)=>s+r.mAvg,0)/kraGapRows.length).toFixed(2) : 'N/A'} / 5
                 </div>
             </div>
             <div style="background:#fff0f0;border-radius:8px;padding:12px 14px;border-top:3px solid #C8102E;text-align:center;">
@@ -6086,21 +5228,19 @@ $page.find('#ud-comp-perf-table').html(`
                     Avg: ${kraGapRows.length ? (kraGapRows.reduce((s,r)=>s+r.lAvg,0)/kraGapRows.length).toFixed(2) : 'N/A'} / 5
                 </div>
             </div>
-            
             <div style="background:#f3e5f5;border-radius:8px;padding:12px 14px;border-top:3px solid #7b1fa2;text-align:center;">
-                <div style="font-size:18px;font-weight:700;color:#7b1fa2;"></div>
-                <div style="font-size:10px;font-weight:600;color:#868e96;text-transform:uppercase;letter-spacing:1px;margin-top:3px;padding-top:10px;">Biggest Gap KRA</div>
+                <div style="font-size:18px;font-weight:700;color:#7b1fa2;">${kraGapRows.length > 0 ? kraGapRows[0].name.substring(0,18) + (kraGapRows[0].name.length > 18 ? '…' : '') : '—'}</div>
+                <div style="font-size:10px;font-weight:600;color:#868e96;text-transform:uppercase;letter-spacing:1px;margin-top:3px;">Biggest Gap KRA</div>
                 <div style="font-size:10px;color:#adb5bd;margin-top:2px;">
                     Gap: ${kraGapRows.length ? (kraGapRows[0].gap >= 0 ? '+' : '') + kraGapRows[0].gap.toFixed(2) : '—'}
                 </div>
             </div>
         </div>
-        <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+        <div style="overflow-x:auto;">
             <table class="ud-table">
                 <thead><tr>
                     <th>Competency / KRA</th>
                     <th>🌟 Top &amp; Strong (Avg / 5)</th>
-                    <th>🔶 Middle Performers (Avg / 5)</th>
                     <th>🔴 Low Performers (Avg / 5)</th>
                     <th style="text-align:center;">Gap</th>
                 </tr></thead>
@@ -6138,27 +5278,6 @@ $page.find('#ud-comp-perf-table').html(`
                         $page.find('#ud-comp-loading').hide();
                         $page.find('#ud-comp-content').show();
 
-                        // mkChart('ud-kra-bar-chart', {
-                        //     type: 'bar',
-                        //     data: {
-                        //         labels: kraNames,
-                        //         datasets: [
-                        //             { label:'Avg Self Score',     data: kraAvgSelf, backgroundColor:'rgba(200,16,46,0.65)', borderColor:'#C8102E', borderWidth:1, borderRadius:5 },
-                        //             { label:'Avg Assessor Score', data: kraAvgAssr, backgroundColor:'rgba(15,31,61,0.70)',  borderColor:'#0f1f3d', borderWidth:1, borderRadius:5 }
-                        //         ]
-                        //     },
-                        //     options: {
-                        //         responsive:true, maintainAspectRatio:false, indexAxis:'y',
-                        //         scales: {
-                        //             x: { beginAtZero:true, max:5, grid:{ color:'rgba(0,0,0,.05)' } },
-                        //             y: { ticks:{ font:{ size:11 } } }
-                        //         },
-                        //         plugins: {
-                        //             legend:{ position:'bottom' },
-                        //             title:{ display:true, text:'Avg Self & Assessor Score per KRA (out of 5)', font:{ size:12 } }
-                        //         }
-                        //     }
-                        // });
                         mkChart('ud-kra-bar-chart', {
                             type: 'bar',
                             data: {
@@ -6181,90 +5300,6 @@ $page.find('#ud-comp-perf-table').html(`
                             }
                         });
 
-                        let kraChartData = {
-                            labels: [...kraNames],
-                            self:   [...kraAvgSelf],
-                            assr:   [...kraAvgAssr]
-                        };
-
-                        $('#ud-kra-bar-chart')
-                            .css('cursor','pointer')
-                            .off('click')
-                            .on('click', function() {
-
-                                // ── Always destroy old chart + remove old canvas before creating dialog ──
-                                let existingChart = Chart.getChart('ud-kra-bar-chart-modal');
-                                if (existingChart) existingChart.destroy();
-                                $('#ud-kra-bar-chart-modal').closest('.modal').remove();  // nuke old dialog DOM too
-
-                                // ── Fresh dialog every click ──────────────────────────────────────────────
-                                let d = new frappe.ui.Dialog({
-                                    title: 'KRA Score Distribution',
-                                    size: 'extra-large'
-                                });
-
-                                $(d.body).html(`
-                                    <div style="padding:16px; box-sizing:border-box;">
-                                        <canvas id="ud-kra-bar-chart-modal"></canvas>
-                                    </div>
-                                `);
-
-                                d.show();
-
-                                setTimeout(() => {
-                                    let canvas = document.getElementById('ud-kra-bar-chart-modal');
-                                    if (!canvas) return;
-
-                                    let modalWidth = $(d.body).width() || 800;
-                                    canvas.width        = modalWidth - 32;
-                                    canvas.height       = 480;
-                                    canvas.style.width  = (modalWidth - 32) + 'px';
-                                    canvas.style.height = '480px';
-
-                                    new Chart(canvas, {
-                                        type: 'bar',
-                                        data: {
-                                            labels: kraChartData.labels.map(l => l.toUpperCase()),
-
-                                            datasets: [
-                                                {
-                                                    label: 'Avg Self Score',
-                                                    data:  kraChartData.self,
-                                                    backgroundColor: 'rgba(200,16,46,0.65)',
-                                                    borderColor: '#C8102E',
-                                                    borderWidth: 1,
-                                                    borderRadius: 5
-                                                },
-                                                {
-                                                    label: 'Avg Assessor Score',
-                                                    data:  kraChartData.assr,
-                                                    backgroundColor: 'rgba(15,31,61,0.70)',
-                                                    borderColor: '#0f1f3d',
-                                                    borderWidth: 1,
-                                                    borderRadius: 5
-                                                }
-                                            ]
-                                        },
-                                        options: {
-                                            responsive: false,
-                                            maintainAspectRatio: false,
-                                            indexAxis: 'y',
-                                            scales: {
-                                                x: { beginAtZero:true, max:5, grid:{ color:'rgba(0,0,0,.05)' } },
-                                                y: { ticks:{ font:{ size:13 } } }
-                                            },
-                                            plugins: {
-                                                legend: { position:'bottom' },
-                                                title: {
-                                                    display: true,
-                                                    text: 'Avg Self & Assessor Score per KRA (out of 5)',
-                                                    font: { size:14 }
-                                                }
-                                            }
-                                        }
-                                    });
-                                }, 300);
-                            });
                         mkChart('ud-kra-radar-chart', {
                             type: 'radar',
                             data: {
@@ -6284,110 +5319,6 @@ $page.find('#ud-comp-perf-table').html(`
                             }
                         });
 
-                        let kraRadarData = {
-                            labels: [...kraNames],
-                            self:   [...kraAvgSelf],
-                            assr:   [...kraAvgAssr]
-                        };
-
-                        $('#ud-kra-radar-chart')
-                            .css('cursor', 'pointer')
-                            .off('click')
-                            .on('click', function() {
-
-                                // Destroy + purge old dialog
-                                let existingChart = Chart.getChart('ud-kra-radar-chart-modal');
-                                if (existingChart) existingChart.destroy();
-                                $('#ud-kra-radar-chart-modal').closest('.modal').remove();
-
-                                // Fresh dialog every click
-                                let d = new frappe.ui.Dialog({
-                                    title: 'Galfar Values & Competency Radar',
-                                    size: 'large'
-                                });
-
-                                // Force wider than Frappe's default extra-large cap
-                                $(d.$wrapper).find('.modal-dialog').css({
-                                    'max-width': '50vw',
-                                    'width':     '50vw'
-                                });
-
-                                $(d.body).html(`
-                                    <div style="padding:12px; box-sizing:border-box; overflow-y:auto; max-height:75vh;">
-                                        <canvas id="ud-kra-radar-chart-modal"></canvas>
-                                    </div>
-                                `);
-
-                                d.show();
-
-                                setTimeout(() => {
-                                    let canvas = document.getElementById('ud-kra-radar-chart-modal');
-                                    if (!canvas) return;
-
-                                    let modalWidth = $(d.body).width() || 650;
-                                    let size = modalWidth - 24;
-
-                                    canvas.width        = size;
-                                    canvas.height       = size;       // square = perfect radar shape
-                                    canvas.style.width  = size + 'px';
-                                    canvas.style.height = size + 'px';
-
-                                    new Chart(canvas, {
-                                        type: 'radar',
-                                        data: {
-                                            labels: kraRadarData.labels.map(l => l.toUpperCase()),
-                                            datasets: [
-                                                {
-                                                    label: 'Avg Self Score',
-                                                    data:  kraRadarData.self,
-                                                    borderColor: '#C8102E',
-                                                    backgroundColor: 'rgba(200,16,46,.15)',
-                                                    pointBackgroundColor: '#C8102E',
-                                                    pointRadius: 5
-                                                },
-                                                {
-                                                    label: 'Avg Assessor Score',
-                                                    data:  kraRadarData.assr,
-                                                    borderColor: '#0f1f3d',
-                                                    backgroundColor: 'rgba(15,31,61,.15)',
-                                                    pointBackgroundColor: '#0f1f3d',
-                                                    pointRadius: 5
-                                                }
-                                            ]
-                                        },
-                                        options: {
-                                            responsive: false,
-                                            maintainAspectRatio: false,
-                                            layout: {
-                                                padding: 60    // keeps edge labels from clipping
-                                            },
-                                            scales: {
-                                                r: {
-                                                    beginAtZero: true,
-                                                    max: 5,
-                                                    ticks: {
-                                                        font: { size: 10 },
-                                                        backdropColor: 'transparent'
-                                                    },
-                                                    pointLabels: {
-                                                        font: { size: 10 },
-                                                        color: '#333'
-                                                    }
-                                                }
-                                            },
-                                            plugins: {
-                                                legend: { position: 'bottom' },
-                                                title: {
-                                                    display: true,
-                                                    text: 'Galfar Values & Competency Radar (out of 5)',
-                                                    font: { size: 13 }
-                                                }
-                                            }
-                                        }
-                                    });
-                                }, 300);
-                            });
-
                         let kraTableRows = kraNames.map((n, i) => {
                             let selfAvg = kraAvgSelf[i];
                             let asrAvg  = kraAvgAssr[i];
@@ -6395,11 +5326,10 @@ $page.find('#ud-comp-perf-table').html(`
                             let cls     = asrAvg >= 4 ? 'green' : asrAvg >= 2.5 ? 'orange' : 'red';
                             let barW    = Math.min((asrAvg / 5) * 100, 100);
                             return `<tr>
-                                <td style="font-weight:600;">${n.toUpperCase()}</td>
+                                <td style="font-weight:600;">${n}</td>
                                 <td style="text-align:center;">${cnt}</td>
                                 <td style="text-align:center;color:#C8102E;font-weight:700;">${selfAvg.toFixed(2)}</td>
-                                <td style="text-align:center;color:#0f1f3d;font-weight:700;">${(asrAvg*100).toFixed(0)}%</td>
-                                
+                                <td style="text-align:center;color:#0f1f3d;font-weight:700;">${asrAvg.toFixed(2)}</td>
                                 <td>
                                     <div style="display:flex;align-items:center;gap:8px;">
                                         <div class="ud-prog" style="flex:1;"><div class="ud-prog-fill" style="width:${barW}%;background:#0f1f3d;"></div></div>
@@ -6449,20 +5379,26 @@ $page.find('#ud-comp-perf-table').html(`
 
             $page.find('#ud-card-total').off('click').on('click',     () => openList());
             $page.find('#ud-card-completed').off('click').on('click', () => openList({ workflow_state: ['in', ['Approved','Accepted']] }));
-            $page.find('#ud-card-pending').off('click').on('click',   () => openList({ workflow_state: ['not in', ['Approved','Accepted','Cancelled']] }));
+            $page.find('#ud-card-pending').off('click').on('click',   () => openList({ workflow_state: ['not in', ['Approved','Accepted']] }));
             $page.find('#ud-card-avg').off('click').on('click',       () => openList({ custom_appraisal_status: ['==', 'Overdue'] }));
-            $page.find('#ud-card-top').off('click').on('click',       () => openList({ workflow_state: ['in', ['Approved','Accepted']],total_score: ['>', 3.5] }));
-            $page.find('#ud-card-low').off('click').on('click',       () => openList({ workflow_state: ['in', ['Approved','Accepted']],total_score: ['<', 2.5]}));
+            $page.find('#ud-card-top').off('click').on('click',       () => openList({ docstatus: ['in', ['0','1']],total_score: ['>', 3.5] }));
+            $page.find('#ud-card-low').off('click').on('click',       () => openList({ docstatus: ['in', ['0','1']],total_score: ['<', 2.5]}));
             // ── Performer mini-KPI card clicks ────────────────────────────────────────
-            
+            $page.find('#udp-kpi-top').off('click').on('click',
+                () => openList({ total_score: ['>=', 4.0] }));
+            $page.find('#udp-kpi-strong').off('click').on('click',
+                () => openList({ total_score: ['between', [3.5, 3.99]] }));
+            $page.find('#udp-kpi-low').off('click').on('click',
+                () => openList({ total_score: ['<', 2.5] }));
+            $page.find('#udp-kpi-critical').off('click').on('click',
+                () => openList({ total_score: ['<=', 2.0] }));
             function perfBand(s) {
-                
     let v = parseFloat(s) || 0;
-    if (v >= 4.0) return { label: 'A — Excellent',  cls: 'ud-badge-green',  hex: '#4C8C32' };
-    if (v >= 3.0) return { label: 'B — Very Good',  cls: 'ud-badge-blue',   hex: '#9AC654' };
-    if (v >= 2.0) return { label: 'C — Good',       cls: 'ud-badge-orange', hex: '#F1D548' };
-    if (v >= 1.0) return { label: 'D — Acceptable', cls: 'ud-badge-red',    hex: '#D97706' };
-    return         { label: 'E — Poor',             cls: 'ud-badge-red',    hex: '#ED2D1E' };
+    if (v >= 4.0) return { label: 'A — Excellent',  cls: 'ud-badge-green',  hex: '#28a745' };
+    if (v >= 3.0) return { label: 'B — Very Good',  cls: 'ud-badge-blue',   hex: '#1565c0' };
+    if (v >= 2.0) return { label: 'C — Good',       cls: 'ud-badge-orange', hex: '#e6a800' };
+    if (v >= 1.0) return { label: 'D — Acceptable', cls: 'ud-badge-red',    hex: '#e53935' };
+    return         { label: 'E — Poor',             cls: 'ud-badge-red',    hex: '#b71c1c' };
 }
  
 // ── Helper: horizontal score bar ─────────────────────────────────────────
@@ -6810,7 +5746,7 @@ function render_historical_section(hd) {
 
     const GRADES       = ['A', 'B', 'C', 'D', 'E'];
     const GRADE_LABELS = { A:'A (Excellent)', B:'B (Very Good)', C:'C (Good)', D:'D (Acceptable)', E:'E (Poor)' };
-    const GRADE_COLORS = { A:'#4C8C32', B:'#9AC654', C:'#F1D548', D:'#D97706', E:'#ED2D1E' };
+    const GRADE_COLORS = { A:'#C8102E', B:'#42a5f5', C:'#66bb6a', D:'#ffa726', E:'#e53935' };
     const GRADE_SCORE  = { A:5, B:4, C:3, D:2, E:1 };
 
     let years = hd.years;   // sorted strings
@@ -6855,7 +5791,7 @@ function render_historical_section(hd) {
             </div>
 
             <!-- Summary table -->
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-hist-heat">
                     <thead>
                         <tr>
@@ -6984,7 +5920,7 @@ function render_historical_section(hd) {
                 <span style="color:#c17000;font-weight:600;">Orange ≥ 2</span> ·
                 <span style="color:#b71c1c;font-weight:600;">Red &lt; 2</span>
             </div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-hist-heat">
                     <thead>
                         <tr>
@@ -8197,7 +7133,7 @@ function render_ld_section(data, unit) {
             </div>
             
             <div style="font-size:12px;font-weight:600;color:#0f1f3d;margin-bottom:10px;">📋 Full Competency Gap Register</div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Competency / KRA</th>
@@ -8412,7 +7348,7 @@ function render_ld_section(data, unit) {
                 </table>
             </div>
             <div style="font-size:12px;font-weight:600;color:#0f1f3d;margin-bottom:8px;">👤 Employee-Level Learning Linkage</div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th style="width:36px;">#</th>
@@ -8478,7 +7414,7 @@ function render_ld_section(data, unit) {
                 <span style="color:#c17000;font-weight:600;">Orange 2–3</span> ·
                 <span style="color:#b71c1c;font-weight:600;">Red &lt;2</span>
             </div>
-            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
                 <table class="ud-matrix-tbl">
                     <thead>
                         <tr>

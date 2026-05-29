@@ -4,15 +4,26 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-03-18 13:32:12.783577",
+ "modified": "2026-05-25 17:37:02.425312",
  "modified_by": "Administrator",
  "module": "PMS",
  "name": "custom-workspace",
  "owner": "Administrator",
  "page_name": "custom-workspace",
- "roles": [],
+ "roles": [
+  {
+   "role": "Appraisal Assessor"
+  },
+  {
+   "role": "HR Manager"
+  },
+  {
+   "role": "Admin"
+  }
+ ],
  "script": null,
  "standard": "Yes",
  "style": null,
- "system_page": 1
+ "system_page": 1,
+ "title": "Project Level Dashboard"
 }

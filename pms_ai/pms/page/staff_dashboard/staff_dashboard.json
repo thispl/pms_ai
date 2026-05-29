@@ -1,0 +1,19 @@
+{
+ "content": null,
+ "creation": "2026-05-21 10:05:40.157460",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2026-05-21 10:05:40.157460",
+ "modified_by": "Administrator",
+ "module": "PMS",
+ "name": "staff-dashboard",
+ "owner": "Administrator",
+ "page_name": "staff-dashboard",
+ "roles": [],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "Staff Dashboard"
+}

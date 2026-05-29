@@ -1,0 +1,12 @@
+/* Kill Google Translate banner on parent page */
+.goog-te-banner-frame,
+.skiptranslate,
+#goog-gt-tt {
+    display: none !important;
+    visibility: hidden !important;
+}
+
+body {
+    top: 0px !important;
+    position: static !important;
+}

@@ -5,6 +5,7 @@ import json
 @frappe.whitelist()
 def analyze_dashboard_chart(chart_context, chart_data):
     # Parse the data string back into a dictionary
+    frappe.errprint(chart_context)
     data = json.loads(chart_data)
     
     api_key = frappe.conf.get("gemini_api_key")
@@ -18,7 +19,15 @@ def analyze_dashboard_chart(chart_context, chart_data):
         prompt_instruction = "Analyze this 5-point performance distribution. Does it look like a healthy normal distribution? Identify if managers are being too lenient (skewed right) or too harsh (skewed left)."
     elif chart_context == "daily_trend":
         prompt_instruction = "Analyze the daily pacing of appraisal submissions. Note any sudden spikes or long lulls that indicate low engagement."
-
+    # elif chart_context in ['aging_insights', 'ageing_insights']:
+    else:
+        prompt_instruction = """
+        Analyze the 'Days Stuck' metrics for pending appraisals. 
+        1. Identify if the Average Age indicates a systemic delay (e.g., >15 days).
+        2. Comment on the 'Critical' (60d+) count. 
+        3. Highlight specific bottlenecks from the provided list that require immediate HR intervention.
+        """
+    
     prompt = f"""
     You are an HR Executive Analyst. 
     

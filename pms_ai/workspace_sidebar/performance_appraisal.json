@@ -36,7 +36,7 @@
    "icon": "dashboard",
    "indent": 0,
    "keep_closed": 0,
-   "label": "Appr. Dashboard",
+   "label": "Project Level Dashboard",
    "link_to": "custom-workspace",
    "link_type": "Page",
    "show_arrow": 0,
@@ -55,7 +55,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-03-28 18:21:08.523639",
+ "modified": "2026-05-25 11:30:54.893989",
  "modified_by": "Administrator",
  "module": "HR",
  "name": "Performance Appraisal",

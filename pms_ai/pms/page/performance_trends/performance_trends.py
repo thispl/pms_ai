@@ -1,48 +1,26 @@
 import frappe
-from frappe.utils import flt
 import json
-
-
-@frappe.whitelist()
-def get_goals_competency(appraisal_names):
-    """
-    Fetch custom_self_score and custom_assessor_score from the
-    Appraisal Goal child table for a list of appraisal names.
-
-    Called from unit_dashboard.js via frappe.call.
-    appraisal_names: JSON string of list e.g. '["APR-001","APR-002"]'
-    """
-    import json
-
-    if isinstance(appraisal_names, str):
-        names = json.loads(appraisal_names)
-    else:
-        names = appraisal_names or []
-
-    if not names:
-        return []
-
-    # Use frappe.db.sql for reliability with custom fields on child tables
-    placeholders = ", ".join(["%s"] * len(names))
-    rows = frappe.db.sql(f"""
-        SELECT
-            ag.parent,
-            ag.kra,
-            ag.per_weightage,
-            ag.custom_self_score,
-            ag.custom_assessor_score,
-            ag.custom_unit
-        FROM `tabAppraisal Goal` ag
-        WHERE ag.parent IN ({placeholders})
-        ORDER BY ag.parent, ag.idx
-    """, tuple(names), as_dict=True)
-
-    return rows
-
-
 
 @frappe.whitelist()
 def get_historical_performance(unit="__ALL__"):
+    """
+    Builds year-on-year grade history by combining:
+
+    SOURCE 1 — Appraisal records
+        Grade is derived from total_score using the band mapping:
+            score >= 4.0  → A (Excellent)
+            score >= 3.0  → B (Very Good)
+            score >= 2.0  → C (Good)
+            score >= 1.0  → D (Acceptable)
+            score <  1.0  → E (Poor)
+        Year is taken from the appraisal's start_date year.
+
+    SOURCE 2 — Previous Rating child table (Employee → previous_ratings)
+        Only included if that employee does NOT already have an Appraisal
+        for that year (avoids double-counting).
+
+    Unit filtering uses Employee.custom_unit directly.
+    """
 
     GRADE_SCORE  = {"A": 5, "B": 4, "C": 3, "D": 2, "E": 1}
     VALID_GRADES = {"A", "B", "C", "D", "E"}

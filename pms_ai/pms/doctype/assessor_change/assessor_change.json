@@ -1,0 +1,119 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-05-19 15:15:45.896010",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "assessee_name",
+  "assessee_gec",
+  "trade_unit",
+  "assessee_grade",
+  "assessor_id",
+  "assessor_name",
+  "assessor_gec",
+  "remarks",
+  "appraisal_status"
+ ],
+ "fields": [
+  {
+   "fetch_if_empty": 1,
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Assessee",
+   "options": "Employee"
+  },
+  {
+   "fetch_from": "assessor_id.custom_gec_no",
+   "fetch_if_empty": 1,
+   "fieldname": "assessor_gec",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "in_list_view": 1,
+   "label": "Assessor GEC"
+  },
+  {
+   "fetch_from": "employee.custom_gec_no",
+   "fetch_if_empty": 1,
+   "fieldname": "assessee_gec",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "in_list_view": 1,
+   "label": "Assessee GEC"
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fetch_if_empty": 1,
+   "fieldname": "assessee_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Assessee Name"
+  },
+  {
+   "fetch_from": "assessor_id.employee_name",
+   "fetch_if_empty": 1,
+   "fieldname": "assessor_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Assessor Name"
+  },
+  {
+   "fetch_from": "employee.custom_unit",
+   "fetch_if_empty": 1,
+   "fieldname": "trade_unit",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Assessee Unit"
+  },
+  {
+   "fetch_if_empty": 1,
+   "fieldname": "remarks",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Appraisal ID",
+   "options": "Appraisal"
+  },
+  {
+   "fetch_if_empty": 1,
+   "fieldname": "appraisal_status",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Appraisal Status"
+  },
+  {
+   "fetch_from": "employee.reports_to",
+   "fetch_if_empty": 1,
+   "fieldname": "assessor_id",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Assessor ID",
+   "options": "Employee"
+  },
+  {
+   "fetch_from": "employee.grade",
+   "fetch_if_empty": 1,
+   "fieldname": "assessee_grade",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Assessee Grade"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-23 23:35:57.869914",
+ "modified_by": "Administrator",
+ "module": "PMS",
+ "name": "Assessor Change",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

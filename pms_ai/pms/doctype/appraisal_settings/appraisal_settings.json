@@ -1,0 +1,196 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-05-14 14:05:12.688438",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "performance_review_cycle",
+  "appraisal_cycle",
+  "column_break_tjhp",
+  "rollout_date",
+  "locking_date",
+  "restrict_access",
+  "notification_settings_tab",
+  "weekly_reminder_frequency_in_days",
+  "recipients",
+  "overview",
+  "assessor_change_tab",
+  "appraisal_template",
+  "column_break_hnqv",
+  "unit",
+  "column_break_jwvy",
+  "employee",
+  "column_break_zwfk",
+  "assessor",
+  "section_break_kkid",
+  "employees",
+  "assessor_change"
+ ],
+ "fields": [
+  {
+   "fieldname": "weekly_reminder_frequency_in_days",
+   "fieldtype": "Select",
+   "label": "Weekly Reminder Frequency",
+   "options": "Sunday\nMonday\nTuesday\nWednesday\nThursday\nFriday\nSaturday"
+  },
+  {
+   "description": "Note : Please Enter Each Email Address on a new row",
+   "fieldname": "recipients",
+   "fieldtype": "Code",
+   "label": "HRBP/HR Recipients"
+  },
+  {
+   "fieldname": "performance_review_cycle",
+   "fieldtype": "Select",
+   "label": "Performance Review Cycle",
+   "options": "\nHalf Yearly Review\nAnnual Review"
+  },
+  {
+   "depends_on": "eval:doc.performance_review_cycle",
+   "fieldname": "appraisal_cycle",
+   "fieldtype": "Link",
+   "label": "Appraisal Cycle",
+   "options": "Appraisal Cycle"
+  },
+  {
+   "fieldname": "unit",
+   "fieldtype": "Link",
+   "label": "Unit",
+   "options": "Unit"
+  },
+  {
+   "fieldname": "rollout_date",
+   "fieldtype": "Date",
+   "label": "Rollout Date"
+  },
+  {
+   "fieldname": "locking_date",
+   "fieldtype": "Date",
+   "label": "Locking Date"
+  },
+  {
+   "fieldname": "assessor",
+   "fieldtype": "Link",
+   "label": "Assessor",
+   "options": "Employee"
+  },
+  {
+   "fieldname": "notification_settings_tab",
+   "fieldtype": "Tab Break",
+   "label": "Notification Settings"
+  },
+  {
+   "default": "0",
+   "fieldname": "restrict_access",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Restrict Access"
+  },
+  {
+   "depends_on": "employees",
+   "fieldname": "assessor_change",
+   "fieldtype": "Button",
+   "label": "Change Assessor"
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Assessee",
+   "options": "Employee"
+  },
+  {
+   "fieldname": "overview",
+   "fieldtype": "HTML",
+   "label": "Overview"
+  },
+  {
+   "fieldname": "column_break_tjhp",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "assessor_change_tab",
+   "fieldtype": "Tab Break",
+   "label": "Change Assessor"
+  },
+  {
+   "fieldname": "appraisal_template",
+   "fieldtype": "Link",
+   "label": "Appraisal Template",
+   "options": "Appraisal Template"
+  },
+  {
+   "fieldname": "column_break_hnqv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_kkid",
+   "fieldtype": "Section Break"
+  },
+  {
+   "allow_bulk_edit": 1,
+   "fieldname": "employees",
+   "fieldtype": "Table",
+   "label": "Employees",
+   "options": "Assessor Change"
+  },
+  {
+   "fieldname": "column_break_jwvy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_zwfk",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "grid_page_length": 50,
+ "hide_toolbar": 1,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-05-23 23:44:32.714871",
+ "modified_by": "Administrator",
+ "module": "PMS",
+ "name": "Appraisal Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "select": 1,
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "select": 1,
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR User",
+   "select": 1,
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

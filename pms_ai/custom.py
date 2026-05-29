@@ -1,206 +1,234 @@
 import frappe
 from frappe.utils import flt
 
+import frappe
+from deep_translator import GoogleTranslator
+
+import re
+from deep_translator import GoogleTranslator
+
 @frappe.whitelist()
 def update_appraisal_score(doc, method):
 
-	total_assessor_score = 0
-	total_self_score = 0
+    total_assessor_score = 0
+    total_self_score = 0
 
-	for row in doc.goals:
+    for row in doc.goals:
 
-		# Rating field stores 0.0–1.0, multiply by 5 to get star count (1–5)
-		assessor_score = round(flt(row.custom_assessor_score) * 5)
-		self_score_stars = round(flt(row.custom_self_score) * 5)
-		weighted_self_score = (self_score_stars * flt(row.per_weightage)) / 100
+        # Rating field stores 0.0–1.0, multiply by 5 to get star count (1–5)
+        assessor_score = round(flt(row.custom_assessor_score) * 5)
+        self_score_stars = round(flt(row.custom_self_score) * 5)
+        weighted_self_score = (self_score_stars * flt(row.per_weightage)) / 100
 
-		total_assessor_score += assessor_score
-		total_self_score += weighted_self_score
+        total_assessor_score += assessor_score
+        total_self_score += weighted_self_score
 
-		# Copy assessor score to system score
-		if assessor_score:
-			row.score = assessor_score
+        # Copy assessor score to system score
+        if assessor_score:
+            row.score = assessor_score
 
-		# --- SAFETY RULE VALIDATION ---
-		if row.kra == "Safety":
-			if 0 < assessor_score <= 2 and doc.workflow_state == "Draft":
-				overall = flt(doc.total_score)
+        # --- SAFETY RULE VALIDATION ---
+        if row.kra == "Safety":
+            if 0 < assessor_score <= 2 and doc.workflow_state == "Draft":
+                
+                # if doc.custom_grade not in ["A1","A2","A3","A4"]:
+                #     overall = flt(doc.custom_total_self_score) or 0
+                # else:
+                overall = flt(doc.total_score) or 0
+                if overall >= 3.5:
+                    if doc.workflow_state == "Pending for Assessor" and doc.custom_grade not in ["A1","A2","A3","A4"]:
+                        doc.total_score = 3
+                    elif doc.workflow_state == "Draft" and doc.custom_grade in ["A1","A2","A3","A4"]:
+                        doc.total_score = 3
+                    frappe.msgprint(
+                            "If Safety score is 1 or 2, "
+                            "Overall Effectiveness rating cannot be 4 or 5.",
+                            title="Invalid Rating",
+                            indicator="red"
+                    )
 
-				if overall >= 3.5:
-					doc.total_score = 3
-					doc.custom_total_self_score = 3
-					frappe.msgprint(
-							"If Safety score is 1 or 2, "
-							"Overall Effectiveness rating cannot be 4 or 5.",
-							title="Invalid Rating",
-							indicator="red"
-					)
+            else:
+                if 0 < round(flt(row.custom_self_score) * 5) <= 2:
+                    if doc.custom_grade not in ["A1","A2","A3","A4"]:
+                        overall = flt(doc.custom_total_self_score) or 0
+                    else:
+                        overall = flt(doc.total_score) or 0
 
-			else:
-				if 0 < row.score <= 2:
-					overall = flt(doc.total_score)
+                    if overall >= 4:
+                        doc.custom_total_self_score = 3
+                        frappe.msgprint(
+                                "If Safety score is 1 or 2, "
+                                "Overall Effectiveness rating cannot be 4 or 5.",
+                                title="Invalid Rating",
+                                indicator="red"
+                        )
 
-					if overall >= 4:
-						doc.total_score = 3
-						frappe.msgprint(
-								"If Safety score is 1 or 2, "
-								"Overall Effectiveness rating cannot be 4 or 5.",
-								title="Invalid Rating",
-								indicator="red"
-						)
+    # Set totals
+    doc.custom_total_assessor_score = total_assessor_score
+    doc.custom_total_self_score = total_self_score
+    for row in doc.goals:
+            if row.kra == "Safety":
+                    if 0 < flt(row.custom_self_score)*5 <= 2 and doc.workflow_state == "Draft":
+                            if overall >= 4:
+                                doc.custom_total_self_score =3
+                                doc.custom_total_assessor_score =3
+    # --- WORKFLOW VALIDATION ---
+    previous = doc.get_doc_before_save()
 
-	# Set totals
-	doc.custom_total_assessor_score = total_assessor_score
-	doc.custom_total_self_score = total_self_score
-	for row in doc.goals:
-			if row.kra == "Safety":
-					if 0 < flt(row.custom_self_score)*5 <= 2 and doc.workflow_state == "Draft":
-							if overall >= 4:
-								doc.custom_total_self_score =3
-								doc.custom_total_assessor_score =3
-	# --- WORKFLOW VALIDATION ---
-	previous = doc.get_doc_before_save()
+    if previous and previous.workflow_state != doc.workflow_state:
 
-	if previous and previous.workflow_state != doc.workflow_state:
+            if doc.workflow_state == "Pending for Assessor":
 
-			if doc.workflow_state == "Pending for Assessor":
-
-					if total_self_score <= 0:
-							frappe.throw(
-									"Self Appraisal must be completed before submitting to Assessor."
-							)
+                    if total_self_score <= 0:
+                            frappe.throw(
+                                    "Self Appraisal must be completed before submitting to Assessor."
+                            )
+            if doc.workflow_state == "Approved" and flt(doc.total_score) == 0:
+                frappe.throw("Total Score cannot be Zero.")
 # pms_ai/api.py
 @frappe.whitelist()
 def update_appraisal_from_kra(doc, method):
-	for row in doc.goals:
-		if row.kra and not row.custom_description:
-			row.custom_unit = frappe.db.get_value("KRA",row.kra,"custom_unit") or ""
-			kra_details = frappe.get_all(
-				"KRA Details",
-				filters={
-					"parent": row.kra,
-					"grade": doc.custom_grade
-				},
-				fields=["description"],
-				limit_page_length=1
-			)
+    for row in doc.goals:
+        if row.kra and not row.custom_description:
+            row.custom_unit = frappe.db.get_value("KRA",row.kra,"custom_unit") or ""
+            kra_details = frappe.get_all(
+                "KRA Details",
+                filters={
+                    "parent": row.kra,
+                    "grade": doc.custom_grade
+                },
+                fields=["description"],
+                limit_page_length=1
+            )
 
-			if kra_details:
-				row.custom_description = kra_details[0].description
+            if kra_details:
+                row.custom_description = kra_details[0].description
 @frappe.whitelist()
 def update_all_appraisal_templates():
-	
-	templates = frappe.get_all("Appraisal Template", fields=["name"])
+    
+    templates = frappe.get_all("Appraisal Template", fields=["name"])
 
-	for template in templates:
-		# if template.name !="C2 - HC":
-		# 	return
-		doc = frappe.get_doc("Appraisal Template", template.name)
+    for template in templates:
+        # if template.name !="C2 - HC":
+        # 	return
+        doc = frappe.get_doc("Appraisal Template", template.name)
 
-		updated = False
+        updated = False
 
-		for row in doc.goals:
-			if row.key_result_area:
-				row.custom_unit = frappe.db.get_value("KRA",row.key_result_area,"custom_unit") or ""
-				doc.save(ignore_permissions=True)
-				# Fetch KRA description
-		# 		kra_details = frappe.get_all(
-		# 			"KRA Details",
-		# 			filters={
-		# 				"parent": row.key_result_area,
-		# 				"grade": doc.custom_grade
-		# 			},
-		# 			fields=["description"],
-		# 			limit_page_length=1
-		# 		)
+        for row in doc.goals:
+            if row.key_result_area:
+                row.custom_unit = frappe.db.get_value("KRA",row.key_result_area,"custom_unit") or ""
+                doc.save(ignore_permissions=True)
+                # Fetch KRA description
+        # 		kra_details = frappe.get_all(
+        # 			"KRA Details",
+        # 			filters={
+        # 				"parent": row.key_result_area,
+        # 				"grade": doc.custom_grade
+        # 			},
+        # 			fields=["description"],
+        # 			limit_page_length=1
+        # 		)
 
-		# 		if kra_details:
-		# 			row.custom_description = kra_details[0].description
-		# 			updated = False
+        # 		if kra_details:
+        # 			row.custom_description = kra_details[0].description
+        # 			updated = False
 
-		# if updated:
-		# 	doc.save(ignore_permissions=True)
+        # if updated:
+        # 	doc.save(ignore_permissions=True)
 
-	return "All Appraisal Templates updated successfully"
+    return "All Appraisal Templates updated successfully"
 
 import frappe
 
+
 @frappe.whitelist()
 def get_kra_description(kra, grade):
-	return frappe.get_all(
-		"KRA Details",
-		filters={
-			"parent": kra,
-			"grade": grade
-		},
-		fields=["description"],
-		order_by="name",
-		limit_page_length=1
-	)
+    if frappe.db.exists("KRA",{"custom_unit":"Common","name":kra}):
+        return frappe.get_all(
+            "KRA Details",
+            filters={
+                "parent": kra,
+                "grade": grade
+            },
+            fields=["description"],
+            order_by="name",
+            limit_page_length=1
+        )
+    else:
+        return frappe.get_all(
+            "KRA",
+            filters={
+                "name": kra,
+            },
+            fields=["description"],
+            order_by="name",
+            limit_page_length=1
+        )
 @frappe.whitelist()
 def update_appraisal_score_old_ver(doc, method):
 
-		total_assessor_score = 0
-		total_self_score = 0
+        total_assessor_score = 0
+        total_self_score = 0
 
-		for row in doc.goals:
+        for row in doc.goals:
 
-				assessor_score = flt(row.custom_assessor_score)
-				self_score = (flt(row.custom_self_score)*flt(row.per_weightage))/100
+                assessor_score = flt(row.custom_assessor_score)
+                self_score = (flt(row.custom_self_score)*flt(row.per_weightage))/100
 
-				total_assessor_score += assessor_score
-				total_self_score += self_score
+                total_assessor_score += assessor_score
+                total_self_score += self_score
 
-				# Copy assessor score to system score
-				if assessor_score:
-						row.score = assessor_score
+                # Copy assessor score to system score
+                if assessor_score:
+                        row.score = assessor_score
 
-				# --- SAFETY RULE VALIDATION ---
-				if row.kra == "SAFETY":
+                # --- SAFETY RULE VALIDATION ---
+                if row.kra == "SAFETY":
 
-						if 0 < flt(row.custom_self_score) <= 2 and doc.workflow_state == "Draft":
-								# Use overall score AFTER calculation
-								overall = flt(doc.total_score)
+                        if 0 < flt(row.custom_self_score) <= 2 and doc.workflow_state == "Draft":
+                                # Use overall score AFTER calculation
+                                overall = flt(doc.total_score)
 
-								if overall >= 4:
-										doc.total_score = 3
-										doc.custom_total_self_score =3
-										frappe.msgprint(
-												"If Safety score is 1 or 2, "
-												"Overall Effectiveness rating cannot be 4 or 5.",
-												title="Invalid Rating",
-												indicator="red"
-										)
-						else:
-								if 0 < assessor_score <= 2:
-								# Use overall score AFTER calculation
-										overall = flt(doc.total_score)
+                                if overall >= 4:
+                                        doc.total_score = 3
+                                        doc.custom_total_self_score =3
+                                        frappe.msgprint(
+                                                "If Safety score is 1 or 2, "
+                                                "Overall Effectiveness rating cannot be 4 or 5.",
+                                                title="Invalid Rating",
+                                                indicator="red"
+                                        )
+                        else:
+                                if 0 < assessor_score <= 2:
+                                # Use overall score AFTER calculation
+                                        overall = flt(doc.total_score)
 
-										if overall >= 4:
-												doc.total_score = 3
-												frappe.msgprint(
-														"If Safety score is 1 or 2, "
-														"Overall Effectiveness rating cannot be 4 or 5.",
-														title="Invalid Rating",
-														indicator="red"
-												)
-										
+                                        if overall >= 4:
+                                                doc.total_score = 3
+                                                frappe.msgprint(
+                                                        "If Safety score is 1 or 2, "
+                                                        "Overall Effectiveness rating cannot be 4 or 5.",
+                                                        title="Invalid Rating",
+                                                        indicator="red"
+                                                )
+                                        
 
-		# Set totals
-		doc.custom_total_assessor_score = total_assessor_score
-		doc.custom_total_self_score = total_self_score
-		
-		# --- WORKFLOW VALIDATION ---
-		previous = doc.get_doc_before_save()
+        # Set totals
+        doc.custom_total_assessor_score = total_assessor_score
+        doc.custom_total_self_score = total_self_score
+        
+        # --- WORKFLOW VALIDATION ---
+        previous = doc.get_doc_before_save()
 
-		if previous and previous.workflow_state != doc.workflow_state:
+        if previous and previous.workflow_state != doc.workflow_state:
 
-				if doc.workflow_state == "Pending for Assessor":
+                if doc.workflow_state == "Pending for Assessor":
 
-						if total_self_score <= 0:
-								frappe.throw(
-										"Self Appraisal must be completed before submitting to Assessor."
-								)
+                        if total_self_score <= 0:
+                                frappe.throw(
+                                        "Self Appraisal must be completed before submitting to Assessor."
+                                )
 
 
 
@@ -259,146 +287,182 @@ import frappe
 
 def set_template_by_default(doc, method):
 
-	if not doc.is_new():
-		return
+    if not doc.is_new():
+        return
 
-	grade = (doc.custom_grade or "").strip().upper()
-	unit = (doc.custom_unit or "").strip()
+    grade = (doc.custom_grade or "").strip().upper()
+    unit = (doc.custom_unit or "").strip()
 
-	# Must have grade
-	if not grade:
-		return
+    # Must have grade
+    if not grade:
+        return
 
-	# A1–A4 → Worker default, else keep unit
-	if grade in ["A1", "A2", "A3", "A4"]:
-		template_name = f"{grade} - Worker"
-	else:
-		template_name = f"{grade} - {unit}"
+    # A1–A4 → Worker default, else keep unit
+    if grade in ["A1", "A2", "A3", "A4"]:
+        template_name = f"{grade} - Worker"
+    else:
+        template_name = f"{grade} - {unit}"
 
-	# Check template exists
-	if not frappe.db.exists("Appraisal Template", template_name):
-		doc.appraisal_template = ""
-		doc.set("goals", [])
-		doc.set("custom_additional_goals_for_worker_", [])
-		frappe.msgprint(f"Appraisal Template not found: {template_name}")
-		return
+    # Check template exists
+    if not frappe.db.exists("Appraisal Template", template_name):
+        doc.appraisal_template = ""
+        doc.set("goals", [])
+        doc.set("custom_additional_goals_for_worker_", [])
+        frappe.msgprint(f"Appraisal Template not found: {template_name}")
+        return
 
-	try:
-		# Fetch template
-		template = frappe.get_doc("Appraisal Template", template_name)
+    try:
+        # Fetch template
+        template = frappe.get_doc("Appraisal Template", template_name)
 
-		# Set template and manual rate
-		doc.appraisal_template = template_name
-		doc.rate_goals_manually = 1
+        # Set template and manual rate
+        doc.appraisal_template = template_name
+        doc.rate_goals_manually = 1
 
-		# Clear existing rows
-		doc.set("goals", [])
-		doc.set("custom_additional_goals_for_worker_", [])
+        # Clear existing rows
+        doc.set("goals", [])
+        doc.set("custom_additional_goals_for_worker_", [])
 
-		# Copy goals from template
-		for d in template.get("goals") or []:
-			row = doc.append("goals", {})
-			row.kra = d.key_result_area
-			row.per_weightage = d.per_weightage
-			row.custom_description = d.custom_description or ""
-			row.custom_unit = d.custom_unit or ""
-			# Additional goals for PRODUCTIVITY / ABSENCES
-			if d.key_result_area in ["PRODUCTIVITY", "ABSENCES"]:
-				add_row = doc.append("custom_additional_goals_for_worker_", {})
-				add_row.kra = d.key_result_area
-				add_row.per_weightage = d.per_weightage
-				add_row.custom_description = d.custom_description or ""
-				add_row.custom_unit = d.custom_unit or ""
+        # Copy goals from template
+        for d in template.get("goals") or []:
+            row = doc.append("goals", {})
+            row.kra = d.key_result_area
+            row.per_weightage = d.per_weightage
+            row.custom_description = d.custom_description or ""
+            row.custom_unit = d.custom_unit or ""
+            # Additional goals for PRODUCTIVITY / ABSENCES
+            if d.key_result_area in ["PRODUCTIVITY", "ABSENCES"]:
+                add_row = doc.append("custom_additional_goals_for_worker_", {})
+                add_row.kra = d.key_result_area
+                add_row.per_weightage = d.per_weightage
+                add_row.custom_description = d.custom_description or ""
+                add_row.custom_unit = d.custom_unit or ""
 
-	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Appraisal Template Error")
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Appraisal Template Error")
 
 
+
+
+import frappe
+
+def set_template_by_default_in_appraisal_cycle(doc, method):
+
+    
+
+    for row in doc.appraisees:
+        if row.appraisal_template:
+            continue
+        grade = (row.custom_employee_grade or "").strip()
+        unit = (row.custom_unit or "").strip()
+
+        # Skip if no grade
+        if not grade or not unit:
+            continue
+
+        # A1–A4 → Worker template
+        if grade in ["A1", "A2", "A3", "A4"]:
+            template_name = f"{grade} - Worker"
+        else:
+            template_name = f"{grade} - {unit}"
+        # Check template exists
+        if not frappe.db.exists(
+            "Appraisal Template",
+            template_name
+        ):
+
+            row.appraisal_template = ""
+
+           
+
+            continue
+
+        # Set template
+        row.appraisal_template = template_name
 
 
 def populate_objectives(doc, method=None):
-	if not doc.is_new():
-		return
-	valid_grades = ["C1","C2","C3","D1","D2","D3","E1","E2"]
+    if not doc.is_new():
+        return
+    valid_grades = ["C1","C2","C3","D1","D2","D3","E1","E2"]
 
-	# Condition check
-	if doc.custom_grade in valid_grades:
+    # Condition check
+    if doc.custom_grade in valid_grades:
 
-		# Clear table (safe)
-		doc.set("custom_objectives", [])
+        # Clear table (safe)
+        doc.set("custom_objectives", [])
 
-		# Fetch Objectives
-		objectives = frappe.get_all(
-			"Objectives",
-			fields=["name", "description"],
-			order_by="creation"
-		)
+        # Fetch Objectives
+        objectives = frappe.get_all(
+            "Objectives",
+            fields=["name", "description"],
+            order_by="creation"
+        )
 
-		# Add rows
-		for obj in objectives:
-			doc.append("custom_objectives", {
-				"objective": obj.name,
-				"description": obj.description
-			})
+        # Add rows
+        for obj in objectives:
+            doc.append("custom_objectives", {
+                "objective": obj.name,
+                "description": obj.description
+            })
 
 
 @frappe.whitelist()
 def get_assessor_grade_counts():
-	user = frappe.session.user
+    user = frappe.session.user
 
-	# Check role
-	roles = frappe.get_roles(user)
-	if "Assessor" not in roles:
-		return []
+    # Check role
+    roles = frappe.get_roles(user)
+    if "Assessor" not in roles:
+        return []
 
-	# Get employee linked to user
-	employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    # Get employee linked to user
+    employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
 
-	if not employee:
-		return []
+    if not employee:
+        return []
 
-	data = frappe.db.sql("""
-		SELECT 
-			appraisal.grade,
-			COUNT(*) as count
-		FROM 
-			`tabAppraisal` appraisal
-		JOIN 
-			`tabEmployee` emp ON appraisal.employee = emp.name
-		WHERE 
-			appraisal.workflow_state = 'Draft'
-			AND emp.reports_to = %s
-		GROUP BY 
-			appraisal.grade
-	""", (employee,), as_dict=True)
+    data = frappe.db.sql("""
+        SELECT 
+            appraisal.grade,
+            COUNT(*) as count
+        FROM 
+            `tabAppraisal` appraisal
+        JOIN 
+            `tabEmployee` emp ON appraisal.employee = emp.name
+        WHERE 
+            appraisal.workflow_state = 'Draft'
+            AND emp.reports_to = %s
+        GROUP BY 
+            appraisal.grade
+    """, (employee,), as_dict=True)
 
-	return data
+    return data
 import frappe
 from frappe.utils import flt
 
 
 def validate_total_score_for_assessor(doc, method):
 
-		previous = doc.get_doc_before_save()
+        previous = doc.get_doc_before_save()
 
-		# Check workflow transition
-		if previous and previous.workflow_state != doc.workflow_state:
+        # Check workflow transition
+        if previous and previous.workflow_state != doc.workflow_state:
 
-				if doc.workflow_state == "Approved":
+                if doc.workflow_state == "Approved":
 
-						if flt(doc.total_score) <= 0:
-								frappe.throw(
-										"Total Goal Score must be greater than zero before approval."
-								)
+                        if flt(doc.total_score) <= 0:
+                                frappe.throw(
+                                        "Total Goal Score must be greater than zero before approval."
+                                )
 
 from frappe.utils import nowdate
 @frappe.whitelist()
 def update_appraisal_approved_date(doc, method):
-		if doc.has_value_changed("workflow_state") and doc.workflow_state == "Pending for Assessor":
-				doc.custom_self_approval_date = frappe.utils.nowdate()
-		if doc.has_value_changed("workflow_state") and doc.workflow_state == "Approved":
-				doc.custom_submitted_date = frappe.utils.nowdate()
-
+        if doc.has_value_changed("workflow_state") and doc.workflow_state == "Pending for Assessor":
+                doc.custom_self_approval_date = frappe.utils.nowdate()
+        if doc.has_value_changed("workflow_state") and doc.workflow_state == "Approved":
+                doc.custom_submitted_date = frappe.utils.nowdate()
 
 
 import frappe
@@ -407,848 +471,1341 @@ import json
 import html as _html
 
 KRA_ICON_MAP = {
-	"safety":"🦺","quality":"✅","productivity":"⚡","attendance":"🗓️",
-	"discipline":"📋","initiative":"💡","teamwork":"🤝","communication":"💬",
-	"leadership":"🏆","training":"📚","cost":"💰","delivery":"🚚",
-	"innovation":"🔬","customer":"🌟","environment":"🌿","integrity":"🤲",
-	"simplicity":"🎯","respect":"🫱","continuous":"🔄","project":"📐",
-	"energy":"⚡","governance":"⚖️",
+    "safety":"🦺","quality":"✅","productivity":"⚡","attendance":"🗓️",
+    "discipline":"📋","initiative":"💡","teamwork":"🤝","communication":"💬",
+    "leadership":"🏆","training":"📚","cost":"💰","delivery":"🚚",
+    "innovation":"🔬","customer":"🌟","environment":"🌿","integrity":"🤲",
+    "simplicity":"🎯","respect":"🫱","continuous":"🔄","project":"📐",
+    "energy":"⚡","governance":"⚖️",
 }
 
 def _kra_icon(kra_name):
-	lower = (kra_name or "").lower()
-	for k, v in KRA_ICON_MAP.items():
-		if k in lower: return v
-	return "🎯"
+    lower = (kra_name or "").lower()
+    for k, v in KRA_ICON_MAP.items():
+        if k in lower: return v
+    return "🎯"
 
 def safe(val):
-	return _html.escape(cstr(val), quote=True)
+    return _html.escape(cstr(val), quote=True)
 
 def safe_js(val):
-	return cstr(val).replace('\\','\\\\').replace('"','\\"').replace("'","\\'")\
-					.replace('\n','\\n').replace('\r','').replace('</script>','<\\/script>')
+    return cstr(val).replace('\\','\\\\').replace('"','\\"').replace("'","\\'")\
+                    .replace('\n','\\n').replace('\r','').replace('</script>','<\\/script>')
 
 
 @frappe.whitelist()
 def appraisal_html_template_employee_overview(appraisal_name):
-	doc = frappe.get_doc("Appraisal", appraisal_name)
+    doc = frappe.get_doc("Appraisal", appraisal_name)
 
-	def initials(name):
-		parts = (name or "?").split()
-		return (parts[0][0] + (parts[1][0] if len(parts) > 1 else parts[0][1])).upper()
+    def initials(name):
+        parts = (name or "?").split()
+        return (parts[0][0] + (parts[1][0] if len(parts) > 1 else parts[0][1])).upper()
 
-	def score_class(score, max_score=5):
-		if flt(score) >= flt(max_score) * 0.8: return "score-high"
-		if flt(score) >= flt(max_score) * 0.5: return "score-mid"
-		return "score-low"
+    def score_class(score, max_score=5):
+        if flt(score) >= flt(max_score) * 0.8: return "score-high"
+        if flt(score) >= flt(max_score) * 0.5: return "score-mid"
+        return "score-low"
 
-	# ── Role / stage flags ─────────────────────────────────────────────────
-	is_worker        = (doc.get("custom_grade") or "") in ["A1","A2","A3","A4"]
-	is_draft         = doc.workflow_state == "Draft"
-	current_user     = frappe.session.user
+    # ── Role / stage flags ─────────────────────────────────────────────────
+    is_worker        = (doc.get("custom_grade") or "") in ["A1","A2","A3","A4"]
+    is_draft         = doc.workflow_state == "Draft"
+    current_user     = frappe.session.user
 
-	assessor_employee = doc.get("custom_assessor") or ""
-	is_assessor       = "Appraisal Assessor" in frappe.get_roles(frappe.session.user)
-	is_appraisal_user = "Appraisal User"     in frappe.get_roles(frappe.session.user)
+    assessor_employee = doc.get("custom_assessor") or ""
+    is_assessor       = "Appraisal Assessor" in frappe.get_roles(frappe.session.user)
+    is_admin       = "HR Manager" in frappe.get_roles(frappe.session.user)
+    is_appraisal_user = "Appraisal User"     in frappe.get_roles(frappe.session.user)
+    is_restricted = doc.get("custom_restricted")
+    is_published = doc.get("custom_published")
+    logined_employee = frappe.db.get_value("Employee",{"user_id":frappe.session.user},["name"]) or ""
+    if logined_employee == doc.get("employee") and is_assessor:
+        is_assessor = False
+        is_admin = False
+    
+    self_editable     = is_draft and is_appraisal_user and not is_worker and not is_assessor and not doc.get("custom_restricted")
+    assessor_editable = is_assessor and doc.workflow_state == "Pending for Assessor" and not doc.get("custom_restricted")
+    if is_worker and is_draft:
+        assessor_editable = is_assessor and not doc.get("custom_restricted")
+    show_oe = is_published or is_assessor or is_admin
+    show_assessor_stars = is_published or is_assessor or is_admin
+    if logined_employee != doc.get("employee"):
+        self_editable = False
+    # ── Theme based on role ────────────────────────────────────────────────
+    # WORKER CATEGORY (A1–A4): Navy + Gold theme matching the screenshot
+    if is_worker:
+        T = {
+            # ── Core palette: light navy blue ──────────────────────────────────
+            "primary":            "#1e4d8c",          # lighter navy (was #0f1f3d)
+            "primary_dark":       "#163a6b",
+            "primary_mid":        "#2a5fa8",           # mid-light blue
+            "primary_light":      "#eef4fc",           # very light blue tint background
 
-	self_editable     = is_draft and is_appraisal_user and not is_worker and not is_assessor
-	assessor_editable = is_assessor and doc.workflow_state =="Pending for Assessor"
-	if is_worker and is_draft:
-		assessor_editable = is_assessor
+            # ── Gold accent (unchanged) ────────────────────────────────────────
+            "accent":             "#c9a84c",
+            "accent_lt":          "#f0d080",           # brighter gold for shine
+            "accent_deep":        "#8B6508",
+            "accent_bright":      "#f5c518",           # vivid shine gold
+            "accent_pale":        "#FBF0C0",
+            "accent_dim":         "rgba(201,168,76,0.15)",
+            "accent_glow":        "rgba(201,168,76,0.50)",
+            "accent_border":      "rgba(201,168,76,0.55)",
+            "accent_border_hex":  "#c9a84c",
 
-	# ── Employee photo ─────────────────────────────────────────────────────
-	emp_image  = doc.get("image") or frappe.db.get_value("Employee", doc.employee, "image")
-	image_html = (f'<img src="{emp_image}" alt="{safe(doc.employee_name)}">'
-				  if emp_image else f'<div class="emp-avatar-initials">{initials(doc.employee_name)}</div>')
-	logo_image_html = (f'<img src="/files/galfar-logo.png" alt="Logo">')
+            # ── Header: light-to-mid navy with shine sweep ─────────────────────
+            "header_grad":        "linear-gradient(135deg,#163a6b 0%,#1e4d8c 40%,#2a5fa8 70%,#3a7fd4 100%)",
+            "header_border":      "#f0d080",
 
-	# ── Badges ─────────────────────────────────────────────────────────────
-	badges = ""
-	if doc.company:             badges += f'<span class="badge badge-gold">🏢 {safe(doc.company)}</span>'
-	if doc.appraisal_cycle:     badges += f'<span class="badge badge-white">Cycle: {safe(doc.appraisal_cycle)}</span>'
-	if doc.get("custom_grade"): badges += f'<span class="badge badge-white">Grade: {safe(doc.custom_grade)}</span>'
+            # ── Gold frame (brighter, more shimmer) ────────────────────────────
+            "frame_grad":         "conic-gradient(from 0deg,#5c3d08 0deg,#c9a84c 35deg,#f5d97a 70deg,#fff4a0 100deg,#f5d97a 130deg,#c9a84c 160deg,#8B6508 195deg,#f5c518 230deg,#fff4a0 255deg,#f5d97a 290deg,#c9a84c 320deg,#5c3d08 360deg)",
+            "frame_glow1":        "rgba(201,168,76,0.90)",
+            "frame_glow2":        "rgba(201,168,76,0.65)",
+            "frame_glow3":        "rgba(201,168,76,0.30)",
+            "frame_glow4":        "rgba(30,77,140,0.20)",
 
-	# ── KRA List for dropdown ──────────────────────────────────────────────
-	kra_list         = frappe.get_all("KRA", filters={"custom_unit": doc.get("custom_unit")}, fields=["name"], order_by="name asc")
-	kra_options_json = json.dumps([k["name"] for k in kra_list]).replace('</script>','<\\/script>')
+            # ── Stripe: light navy + bright gold shine ─────────────────────────
+            "stripe":             "linear-gradient(90deg,#163a6b 0%,#1e4d8c 18%,#c9a84c 42%,#fff4a0 55%,#f5d97a 65%,#c9a84c 78%,#2a5fa8 88%,#163a6b 100%)",
+            "stripe_glow":        "rgba(245,217,122,0.45)",
 
-	# ── Row map ────────────────────────────────────────────────────────────
-	goals = doc.get("goals") or []
-	row_map = {}
-	for tbl_idx, row in enumerate(goals):
-		assessor_raw   = flt(row.get("custom_assessor_score") or 0)
-		self_raw       = flt(row.get("custom_self_score") or 0)
-		weightage      = flt(row.get("per_weightage") or 0)
-		assessor_stars = round(assessor_raw * 5)
-		self_stars_val = round(self_raw * 5)
-		goal_score_val = round(assessor_stars * weightage / 100, 2)
-		row_map[tbl_idx] = {
-			"name":           cstr(row.name),
-			"cdt":            "Appraisal Goal",
-			"weightage":      weightage,
-			"assessor_stars": assessor_stars,
-			"self_stars":     self_stars_val,
-			"goal_score":     goal_score_val,
-			"total_score":    goal_score_val,
-			"kra":            cstr(row.get("kra") or ""),
-			"per_weightage":  weightage,
-		}
-	row_map_json = json.dumps(row_map).replace('</script>','<\\/script>')
+            # ── Section headings ───────────────────────────────────────────────
+            "section_color":      "#1e4d8c",
+            "section_line":       "linear-gradient(90deg,#f5c518,rgba(201,168,76,0.35),transparent)",
 
-	# ── KRA Cards ──────────────────────────────────────────────────────────
-	cards = ""; card_idx = 0
-	for tbl_idx, row in enumerate(goals):
-		if (row.get("custom_unit") or "").strip() != "Common": continue
-		if row.get("kra") in ["PRODUCTIVITY","ABSENCES"]: continue
-		kra_name           = cstr(row.get("kra") or "")
-		custom_description = cstr(row.get("custom_description") or "")
-		weightage          = flt(row.get("per_weightage") or 0)
-		self_stars         = round(flt(row.get("custom_self_score") or 0) * 5)
-		assessor_stars     = round(flt(row.get("custom_assessor_score") or 0) * 5)
-		goal_score_val     = round(assessor_stars * weightage / 100, 2)
-		icon               = _kra_icon(kra_name)
-		pill_cls           = score_class(assessor_stars)
-		desc_safe          = safe(custom_description)
+            # ── Table rows ────────────────────────────────────────────────────
+            "odd_row":            "#eef4fc",           # light blue tint
+            "even_row":           "#ffffff",
+            "hover_row":          "#dbeafe",           # soft blue hover
 
-		self_section_html = ""
-		if not is_worker:
-			self_cursor = "pointer" if self_editable else "default"
-			self_html = "".join(
-				f'<span class="kra-star {"checked" if s <= self_stars else ""}" '
-				f'data-tbl="{tbl_idx}" data-val="{s}" data-type="self" '
-				+ (f'onclick="selfStarClick(this)"' if self_editable else '') +
-				f' style="cursor:{self_cursor}">{"★" if s <= self_stars else "☆"}</span>'
-				for s in range(1, 6))
-			self_section_html = f'''
-			<div class="kra-row-label">Self</div>
-			<div class="star-row self-stars" id="card-self-{card_idx}">{self_html}</div>'''
+            # ── Table headers ─────────────────────────────────────────────────
+            "table_header_grad":  "linear-gradient(135deg,#163a6b 0%,#2a5fa8 100%)",
+            "table_border":       "rgba(201,168,76,0.55)",
+            "table_border_hex":   "rgba(201,168,76,0.18)",
+            "table_cell_border":  "rgba(201,168,76,0.18)",
 
-		assessor_cursor = "pointer" if assessor_editable else "default"
-		assessor_html = "".join(
-			f'<span class="kra-star {"checked" if s <= assessor_stars else ""}" '
-			f'data-tbl="{tbl_idx}" data-val="{s}" '
-			+ (f'onclick="starClick(this)"' if assessor_editable else '') +
-			f' style="cursor:{assessor_cursor}">{"★" if s <= assessor_stars else "☆"}</span>'
-			for s in range(1, 6))
+            # ── Info panel ────────────────────────────────────────────────────
+            "info_border":        "rgba(201,168,76,0.55)",
+            "info_shadow":        "rgba(30,77,140,0.10)",
+            "lbl_color":          "#1e4d8c",
 
-		cards += f"""
-		<div class="kra-card" id="kra-card-{card_idx}" data-tbl="{tbl_idx}" data-desc="{desc_safe}"
-			 onmouseenter="showKraTooltip(this)" onmouseleave="hideKraTooltip()">
-			<div class="kra-card-icon">{icon}</div>
-			<div class="kra-card-title">{safe(kra_name)}</div>
-			{self_section_html}
-			<div class="kra-row-label" style="margin-top:6px;">Assessor</div>
-			<div class="star-row assessor-stars" id="card-assessor-{card_idx}">{assessor_html}</div>
-			<div class="kra-card-score-wrap">
-				<span class="score-pill {pill_cls}" id="card-pill-{card_idx}">{assessor_stars} / 5</span>
-			</div>
-		</div>"""
-		card_idx += 1
+            # ── KRA inputs / dropdown ──────────────────────────────────────────
+            "kra_input_border":       "rgba(201,168,76,0.55)",
+            "kra_input_focus_shadow": "rgba(245,197,24,0.22)",
+            "kra_dd_border":          "rgba(201,168,76,0.55)",
+            "kra_dd_shadow":          "rgba(30,77,140,0.15)",
+            "kra_dd_hover_bg":        "#dbeafe",
+            "kra_dd_hover_color":     "#1e4d8c",
 
-	kra_cards_html = f"""
-	<div class="collapsible-section" style="text-align:center;">
-		<div class="section collapsible-header" onclick="toggleSection(this)">
-			<span style='font-size:15px;'>Galfar Values</span><span class="coll-icon">▼</span>
-		</div>
-		<div class="collapsible-body" style="text-align:center;">
-			<div class="kra-cards-grid" style="text-align:center;">{cards}</div>
-			<div id="kra-tooltip-panel" class="kra-tooltip-panel" style="display:none;text-align:center;"></div>
-		</div>
-	</div>""" if cards else ""
+            # ── KRA cards ─────────────────────────────────────────────────────
+            "kra_card_border":        "rgba(201,168,76,0.55)",
+            "kra_card_top":           "#c9a84c",
+            "kra_card_bg":            "linear-gradient(160deg,#fff 50%,#eef4fc 100%)",
+            "kra_card_hover_shadow":  "rgba(30,77,140,0.22)",
+            "kra_tooltip_bg":         "linear-gradient(135deg,#163a6b,#1e4d8c)",
+            "kra_tooltip_border":     "rgba(201,168,76,0.40)",
+            "kra_tooltip_color":      "#e0f0ff",
+            "kra_tooltip_strong":     "#f0d080",
 
-	# ── Goals Table ────────────────────────────────────────────────────────
-	goal_rows = ""; index = 0
-	for tbl_idx, row in enumerate(goals):
-		if (row.get("custom_unit") or "").strip() == "Common":
-			if row.get("kra") not in ["PRODUCTIVITY","ABSENCES"]: continue
-		index += 1
-		kra_name           = cstr(row.get("kra") or "")
-		weightage          = flt(row.get("per_weightage") or 0)
-		custom_description = cstr(row.get("custom_description") or "")
-		self_stars         = round(flt(row.get("custom_self_score") or 0) * 5)
-		assessor_stars     = round(flt(row.get("custom_assessor_score") or 0) * 5)
-		goal_score_val     = round(assessor_stars * weightage / 100, 2)
-		pill_cls           = score_class(assessor_stars)
-		kra_name_safe      = safe(kra_name) if row.get("custom_is_new_goal") else ""
-	
-		kra_td = f"""
-			<td class="col-goal">
-			<div class="edit-cell">
-				<input class="kra-input" type="text"
-					data-tbl="{tbl_idx}" data-field="kra"
-					value="{kra_name_safe}" placeholder="Add KRA..."
-					autocomplete="off"
-					oninput="filterKraDropdown(this)"
-					onfocus="showKraDropdown(this)"
-					onblur="hideKraDropdownDelayed(this)"
-					{f'readonly' if not self_editable else ''}
-				/>
-			</div>
-		</td>"""
+            # ── Score cards ───────────────────────────────────────────────────
+            "score_card_bg":      "linear-gradient(160deg,#fff 45%,#eef4fc 100%)",
+            "score_card_top":     "linear-gradient(90deg,#163a6b 0%,#1e4d8c 15%,#c9a84c 35%,#fff4a0 50%,#f5d97a 60%,#c9a84c 75%,#2a5fa8 88%,#163a6b 100%)",
+            "score_card_border":  "rgba(201,168,76,0.55)",
+            "score_card_shadow":  "0 4px 24px rgba(30,77,140,0.18),0 1px 8px rgba(201,168,76,0.20)",
+            "sc_label_color":     "#1e4d8c",
 
-		wt_td = f'<td class="col-weight" style="text-align:center;">{weightage}%</td>'
+            # ── Badges ────────────────────────────────────────────────────────
+            "badge_gold_bg":      "rgba(201,168,76,0.16)",
+            "badge_gold_clr":     "#f0d080",
+            "badge_gold_bdr":     "rgba(201,168,76,0.35)",
 
-		if not is_worker:
-			self_cursor = "pointer" if self_editable else "default"
-			self_stars_html = "".join(
-				f'<span class="kra-star {"checked" if s <= self_stars else ""}" '
-				f'data-tbl="{tbl_idx}" data-val="{s}" data-type="self" '
-				+ (f'onclick="selfStarClick(this)"' if self_editable else '') +
-				f' style="cursor:{self_cursor}">{"★" if s <= self_stars else "☆"}</span>'
-				for s in range(1, 6))
-			self_td = f"""
-			<td class="col-stars" style="text-align:center;">
-				<div class="star-row self-stars center-stars" id="tbl-self-{tbl_idx}">{self_stars_html}</div>
-				<div class="score-sub"><span id="tbl-self-score-{tbl_idx}">{self_stars}</span> / 5</div>
-			</td>"""
-		else:
-			self_td = ""
+            # ── Performance grid title ─────────────────────────────────────────
+            "pg_title_grad":      "linear-gradient(135deg,#163a6b 0%,#1e4d8c 55%,#2a5fa8 100%)",
+            "pg_title_border":    "#f0d080",
 
-		assessor_cursor = "pointer" if assessor_editable else "default"
-		assessor_html = "".join(
-			f'<span class="kra-star {"checked" if s <= assessor_stars else ""}" '
-			f'data-tbl="{tbl_idx}" data-val="{s}" '
-			+ (f'onclick="starClick(this)"' if assessor_editable else '') +
-			f' style="cursor:{assessor_cursor}">{"★" if s <= assessor_stars else "☆"}</span>'
-			for s in range(1, 6))
+            # ── Overall effectiveness bar ──────────────────────────────────────
+            "pg_oe_bar":          "linear-gradient(135deg,#163a6b 0%,#1e4d8c 50%,#2a5fa8 100%)",
+            "pg_oe_border":       "#f0d080",
+            "pg_oe_color":        "#f0d080",
+            "pg_oe_val_color":    "#f0d080",
+            "pg_oe_val_bg":       "rgba(201,168,76,0.12)",
+            "pg_oe_val_border":   "rgba(201,168,76,0.35)",
 
-		goal_rows += f"""
-		<tr id="goal-row-{tbl_idx}" data-tbl="{tbl_idx}" data-rowname="{safe(row.name)}">
-			<td class="col-no">{index}</td>
-			{kra_td}
-			<td class="col-desc">
-				<div class="desc-cell" id="desc-cell-{tbl_idx}" title="{safe(custom_description)}">{safe(custom_description)}</div>
-			</td>
-			{wt_td}
-			{self_td}
-			<td class="col-stars" style="text-align:center;">
-				<div class="star-row assessor-stars center-stars" id="tbl-assessor-{tbl_idx}">{assessor_html}</div>
-				<div class="score-sub"><span id="tbl-score-{tbl_idx}">{assessor_stars}</span> / 5</div>
-			</td>
-			<td class="col-pill" style="text-align:center;">
-				<span class="score-pill {pill_cls}" id="tbl-pill-{tbl_idx}">{assessor_stars} / 5</span>
-			</td>
-		</tr>"""
+            # ── Perf grid wrapper ──────────────────────────────────────────────
+            "pg_wrap_border":     "rgba(30,77,140,0.28)",
+            "pg_wrap_shadow":     "0 4px 32px rgba(30,77,140,0.12)",
 
-	self_score_th = '' if is_worker else '<th class="col-stars">Self Score</th>'
-	col_self_col  = '' if is_worker else '<col class="col-stars">'
+            # ── Worker criteria box ────────────────────────────────────────────
+            "wc_bg":              "linear-gradient(135deg,#eef4fc,#dbeafe)",
+            "wc_border":          "rgba(201,168,76,0.50)",
+            "wc_title_color":     "#1e4d8c",
+            "wc_card_border":     "rgba(201,168,76,0.50)",
+            "wc_card_title":      "#1e4d8c",
+            "wc_row_dash":        "#93c5fd",           # light blue dash
 
-	goals_section = f"""
-	<div class="collapsible-section">
-		<div class="section collapsible-header" onclick="toggleSection(this)">
-			<span style='font-size:15px;'>Goals</span><span class="coll-icon">▼</span>
-		</div>
-		<div class="collapsible-body">
-			<div class="table-scroll">
-			<table class="child-table goals-table" id="goals-table">
-				<colgroup>
-					<col class="col-no"><col class="col-goal"><col class="col-desc">
-					<col class="col-weight">{col_self_col}<col class="col-stars"><col class="col-pill">
-				</colgroup>
-				<thead><tr>
-					<th class="col-no">No.</th>
-					<th class="col-goal">Goal</th>
-					<th class="col-desc">Description</th>
-					<th class="col-weight">Wt %</th>
-					{self_score_th}
-					<th class="col-stars">Assessor Score</th>
-					<th class="col-pill">Rating</th>
-				</tr></thead>
-				<tbody id="goals-tbody">{goal_rows}</tbody>
-			</table></div>
-			<div id="goals-save-status" style="margin-top:6px;font-size:12px;color:var(--green);display:none;">✓ Saved</div>
-		</div>
-	</div>""" if goal_rows else ""
+            # ── Avatars ───────────────────────────────────────────────────────
+            "ass_avatar_bg":      "linear-gradient(145deg,#163a6b,#2a5fa8)",
+            "ass_avatar_border":  "#c9a84c",
+            "emp_avatar_bg":      "linear-gradient(145deg,#163a6b,#2a5fa8)",  # blue-to-gold shine
 
-	# ── Score summary ──────────────────────────────────────────────────────
-	total_goal_score_str = doc.get("total_score") or 0 if doc.get("workflow_state") == "Draft" else doc.get("total_score")
-	self_score_str       = doc.get("custom_total_self_score" or 0)
+            # ── Score pills ───────────────────────────────────────────────────
+            "score_pill_low_bg":  "rgba(192,57,43,0.10)",
+            "score_pill_low_clr": "#c0392b",
+            "score_pill_low_bdr": "rgba(192,57,43,0.20)",
 
-	# ── Assessor ───────────────────────────────────────────────────────────
-	reviewer_name  = doc.get("custom_assessor_name") or ""
-	reviewer_id    = frappe.db.get_value("Employee",doc.get("custom_assessor"),"designation") or ""
-	assessor_image = None
-	if doc.get("custom_assessor"):
-		assessor_image = frappe.db.get_value("Employee", doc.custom_assessor, "image")
+            # ── Shadows ───────────────────────────────────────────────────────
+            "shadow_sm":          "0 1px 4px rgba(30,77,140,0.10)",
+            "shadow_md":          "0 4px 20px rgba(30,77,140,0.14)",
+            "shadow_lg":          "0 24px 64px rgba(30,77,140,0.18)",
 
-	# ── Dates / misc ───────────────────────────────────────────────────────
-	start_date = formatdate(doc.get("start_date"))             if doc.get("start_date")             else ""
-	end_date   = formatdate(doc.get("end_date"))               if doc.get("end_date")               else ""
-	doj        = formatdate(doc.get("custom_date_of_joining")) if doc.get("custom_date_of_joining") else ""
-	pre_exp    = doc.get("custom_previous_work_experience")
-	exp_str    = (f"Pre-Galfar: {safe_js(str(pre_exp))} Yrs &nbsp;|&nbsp; " if pre_exp else "") + safe(doc.get("custom_experience") or "")
+            # ── Footer ────────────────────────────────────────────────────────
+            "footer_bg":          "linear-gradient(90deg,#eef4fc,#dbeafe,#eef4fc)",
+            "footer_right_bg":    "linear-gradient(135deg,#FBF0C0,#fff8d0)",
+            "footer_right_bdr":   "rgba(201,168,76,0.50)",
+            "footer_right_clr":   "#8B6508",
+            "footer_right_shadow":"rgba(201,168,76,0.22)",
+        }
+    else:
+        T = {
+            "primary":            "#CE1426",
+            "primary_dark":       "#8a0d1a",
+            "primary_mid":        "#a81020",
+            "primary_light":      "#fdf0f2",
+            "accent":             "#c9a84c",
+            "accent_lt":          "#e8c97a",
+            "accent_deep":        "#8B6508",
+            "accent_bright":      "#D4A017",
+            "accent_pale":        "#FBF0C0",
+            "accent_dim":         "rgba(201,168,76,0.15)",
+            "accent_glow":        "rgba(201,168,76,0.40)",
+            "accent_border":      "rgba(201,168,76,0.50)",
+            "accent_border_hex":  "#c9a84c",
+            "header_grad":        "linear-gradient(135deg,#8a0d1a 0%,#CE1426 55%,#fdf5f6 100%)",
+            "header_border":      "#c9a84c",
+            "frame_grad":         "conic-gradient(from 0deg,#5c3d08 0deg,#c9a84c 40deg,#f5d97a 80deg,#e8c97a 110deg,#c9a84c 150deg,#8B6508 190deg,#D4A017 230deg,#f5d97a 260deg,#c9a84c 300deg,#8B6508 330deg,#5c3d08 360deg)",
+            "frame_glow1":        "rgba(201,168,76,0.70)",
+            "frame_glow2":        "rgba(201,168,76,0.45)",
+            "frame_glow3":        "rgba(201,168,76,0.18)",
+            "frame_glow4":        "rgba(200,16,46,0.20)",
+            "stripe":             "linear-gradient(90deg,#8a0d1a 0%,#CE1426 25%,#c9a84c 55%,#e8c97a 75%,#c9a84c 90%,#8a0d1a 100%)",
+            "stripe_glow":        "rgba(201,168,76,0.30)",
+            "section_color":      "#CE1426",
+            "section_line":       "linear-gradient(90deg,#D4A017,rgba(201,168,76,0.30),transparent)",
+            "odd_row":            "#fff9f0",
+            "even_row":           "#ffffff",
+            "hover_row":          "#fce8eb",
+            "table_header_grad":  "linear-gradient(135deg,#8a0d1a 0%,#CE1426 100%)",
+            "table_border":       "rgba(201,168,76,0.50)",
+            "table_border_hex":   "rgba(201,168,76,0.15)",
+            "table_cell_border":  "rgba(201,168,76,0.15)",
+            "info_border":        "rgba(201,168,76,0.50)",
+            "info_shadow":        "rgba(201,168,76,0.12)",
+            "lbl_color":          "#8B6508",
+            "kra_input_border":   "rgba(201,168,76,0.50)",
+            "kra_input_focus_shadow": "rgba(201,168,76,0.18)",
+            "kra_dd_border":      "rgba(201,168,76,0.50)",
+            "kra_dd_shadow":      "rgba(201,168,76,0.15)",
+            "kra_dd_hover_bg":    "#fff9f0",
+            "kra_dd_hover_color": "#CE1426",
+            "kra_card_border":    "rgba(201,168,76,0.50)",
+            "kra_card_top":       "#c9a84c",
+            "kra_card_bg":        "linear-gradient(160deg,#fff 55%,#fff9ee 100%)",
+            "kra_card_hover_shadow": "rgba(201,168,76,0.28)",
+            "kra_tooltip_bg":     "linear-gradient(135deg,#8a0d1a,#2a1010)",
+            "kra_tooltip_border": "rgba(201,168,76,0.35)",
+            "kra_tooltip_color":  "#f0e0c0",
+            "kra_tooltip_strong": "#e8c97a",
+            "score_card_bg":      "linear-gradient(160deg,#fff 50%,#fff9ee 100%)",
+            "score_card_top":     "linear-gradient(90deg,#8a0d1a,#CE1426,#c9a84c,#e8c97a,#c9a84c,#8a0d1a)",
+            "score_card_border":  "rgba(201,168,76,0.50)",
+            "score_card_shadow":  "0 4px 24px rgba(201,168,76,0.30)",
+            "sc_label_color":     "#CE1426",
+            "badge_gold_bg":      "rgba(201,168,76,0.18)",
+            "badge_gold_clr":     "#e8c97a",
+            "badge_gold_bdr":     "rgba(201,168,76,0.38)",
+            "pg_title_grad":      "linear-gradient(135deg,#8a0d1a 0%,#CE1426 60%,#e8253c 100%)",
+            "pg_title_border":    "#c9a84c",
+            "pg_oe_bar":          "linear-gradient(135deg,#8a0d1a 0%,#CE1426 55%,#9a1a00 100%)",
+            "pg_oe_border":       "#c9a84c",
+            "pg_oe_color":        "#e8c97a",
+            "pg_oe_val_color":    "#e8c97a",
+            "pg_oe_val_bg":       "rgba(201,168,76,0.10)",
+            "pg_oe_val_border":   "rgba(201,168,76,0.30)",
+            "pg_wrap_border":     "rgba(201,168,76,0.50)",
+            "pg_wrap_shadow":     "0 4px 32px rgba(206,20,38,0.10)",
+            "wc_bg":              "linear-gradient(135deg,#fff9f0,#fff3e0)",
+            "wc_border":          "rgba(201,168,76,0.50)",
+            "wc_title_color":     "#CE1426",
+            "wc_card_border":     "rgba(201,168,76,0.50)",
+            "wc_card_title":      "#CE1426",
+            "wc_row_dash":        "#e5c880",
+            "ass_avatar_bg":      "linear-gradient(145deg,#8a0d1a,#CE1426)",
+            "ass_avatar_border":  "#c9a84c",
+            "emp_avatar_bg":      "linear-gradient(145deg,#8a0d1a,#a81020)",
+            "score_pill_low_bg":  "rgba(200,16,46,0.10)",
+            "score_pill_low_clr": "#CE1426",
+            "score_pill_low_bdr": "rgba(200,16,46,0.20)",
+            "shadow_sm":          "0 1px 4px rgba(200,16,46,0.08)",
+            "shadow_md":          "0 4px 20px rgba(200,16,46,0.12)",
+            "shadow_lg":          "0 24px 64px rgba(200,16,46,0.15)",
+            "footer_bg":          "linear-gradient(90deg,#fff9f0,#fff6e8,#fff9f0)",
+            "footer_right_bg":    "linear-gradient(135deg,#FBF0C0,#fff8d0)",
+            "footer_right_bdr":   "rgba(201,168,76,0.50)",
+            "footer_right_clr":   "#8B6508",
+            "footer_right_shadow":"rgba(201,168,76,0.20)",
+        }
 
-	pre_exp = flt(doc.get("custom_previous_work_experience"))
-	galfar_exp = flt(doc.get("custom_internal_work_experience"))
+    # ── Employee photo ─────────────────────────────────────────────────────
+    emp_image  = doc.get("image") or frappe.db.get_value("Employee", doc.employee, "image")
+    image_html = (f'<img src="{emp_image}" alt="{safe(doc.employee_name)}">'
+                  if emp_image else f'<div class="emp-avatar-initials">{initials(doc.employee_name)}</div>')
+    logo_image_html = '<img src="/files/galfar-logo.png" alt="Logo">'
 
-	exp_str = f"Pre-Galfar: {int(pre_exp)} Years, Galfar : {galfar_exp:.2f} Years"
-	status_map   = {0: "Draft", 1: "Approved", 2: "Cancelled"}
-	status_label = status_map.get(doc.docstatus, "Draft")
-	
-	if doc.get("workflow_state") in ["Draft","Pending for Assessor"]:
-		status_class = "draft"
-	elif doc.get("workflow_state") in ["Approved","Accepted"]:
-		status_class = "approved"
-	else:
-		status_class = "draft"
-	
+    # ── Badges ─────────────────────────────────────────────────────────────
+    badges = ""
+    if doc.company:             badges += f'<span class="badge badge-accent">🏢 {safe(doc.company)}</span>'
+    if doc.appraisal_cycle:     badges += f'<span class="badge badge-white">Cycle: {safe(doc.appraisal_cycle)}</span>'
+    if doc.get("custom_grade"): badges += f'<span class="badge badge-white">Grade: {safe(doc.custom_grade)}</span>'
 
-	# ── Performance Grid ───────────────────────────────────────────────────
-	PG_COLS = [
-		{"num":"1","label":"Poor",
-		 "icon_svg":'<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px;"><circle cx="10" cy="10" r="9" fill="#CE1426" opacity=".15" stroke="#CE1426" stroke-width="1.5"/><line x1="6" y1="6" x2="14" y2="14" stroke="#CE1426" stroke-width="2" stroke-linecap="round"/><line x1="14" y1="6" x2="6" y2="14" stroke="#CE1426" stroke-width="2" stroke-linecap="round"/></svg>',
-		 "color":"#CE1426","light":"#fdf2f3","border":"#f5c2c7","text":"#8a0d1a",
-		 "bar":"linear-gradient(90deg,#CE1426,#e84a5a)"},
-		{"num":"2","label":"Acceptable",
-		 "icon_svg":'<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px;"><circle cx="10" cy="10" r="9" fill="#c06000" opacity=".13" stroke="#c06000" stroke-width="1.5"/><line x1="6" y1="10" x2="14" y2="10" stroke="#c06000" stroke-width="2.2" stroke-linecap="round"/></svg>',
-		 "color":"#c06000","light":"#fff8f0","border":"#fdd9aa","text":"#7a3d00",
-		 "bar":"linear-gradient(90deg,#c06000,#e07820)"},
-		{"num":"3","label":"Good",
-		 "icon_svg":'<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px;"><circle cx="10" cy="10" r="9" fill="#0369a1" opacity=".12" stroke="#0369a1" stroke-width="1.5"/><polyline points="5.5,10.5 8.5,13.5 14.5,7" stroke="#0369a1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-		 "color":"#0369a1","light":"#f0f7fd","border":"#bae0f7","text":"#024e7a",
-		 "bar":"linear-gradient(90deg,#0369a1,#0ea5e9)"},
-		{"num":"4","label":"Very Good",
-		 "icon_svg":'<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px;"><circle cx="10" cy="10" r="9" fill="#15803d" opacity=".12" stroke="#15803d" stroke-width="1.5"/><polyline points="5,10 8.5,13.5 15,7" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="8,10 11.5,13.5 18,7" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".5"/></svg>',
-		 "color":"#15803d","light":"#f0fdf5","border":"#bbf7d0","text":"#0d5c2b",
-		 "bar":"linear-gradient(90deg,#15803d,#22c55e)"},
-		{"num":"5","label":"Excellent",
-		 "icon_svg":'<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px;"><polygon points="10,2 12.5,7.5 18.5,8 14,12.5 15.5,18.5 10,15.5 4.5,18.5 6,12.5 1.5,8 7.5,7.5" fill="#b8860b" opacity=".2" stroke="#b8860b" stroke-width="1.2" stroke-linejoin="round"/></svg>',
-		 "color":"#b8860b","light":"#fefce8","border":"#fde68a","text":"#78530a",
-		 "bar":"linear-gradient(90deg,#b8860b,#d4a017)"},
-	]
-	PG_DESCS = [
-		"Performance is below expectations; behavior is contrary to company standards.",
-		"Inconsistent demonstration of this value; requires coaching or behavioral adjustment.",
-		"Consistently demonstrates this value in day-to-day work; meets the standard.",
-		"Frequently goes above and beyond standard requirements regarding this value.",
-		"Consistently far exceeds expectations; acts as a role model and champions this value to others.",
-	]
-	pg_headers = ""; pg_cells = ""
-	for i, col in enumerate(PG_COLS):
-		dots = "".join(
-			f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 2px;background:{"" + col["color"] if j <= i else col["border"]};opacity:{"1" if j <= i else "0.5"};"></span>'
-			for j in range(5))
-		pg_headers += f"""
-		<th class="pg-col-head" style="background:{col['light']};border-right:1px solid {col['border']};border-bottom:4px solid {col['color']};">
-			<div style="width:46px;height:46px;border-radius:12px;background:{col['light']};border:1.5px solid {col['border']};display:flex;align-items:center;justify-content:center;margin:0 auto 10px;box-shadow:0 2px 8px {col['color']}22;">
-				{col['icon_svg']}
-			</div>
-			<span class="pg-num-badge" style="background:{col['color']};box-shadow:0 2px 6px {col['color']}44;">{col['num']}</span>
-			<span class="pg-col-label" style="color:{col['text']};font-size:12px;font-weight:700;">{col['label']}</span>
-			<div style="margin-top:8px;line-height:1;">{dots}</div>
-		</th>"""
-		pg_cells += f"""
-		<td class="pg-desc-cell" style="background:{col['light']};border-right:1px solid {col['border']};">
-			<div style="height:4px;background:{col['bar']};opacity:.85;"></div>
-			<p class="pg-desc-text" style="color:#1e293b;">{PG_DESCS[i]}</p>
-		</td>"""
+    # ── KRA List for dropdown ──────────────────────────────────────────────
+    kra_list = frappe.get_all(
+    "KRA",
+    filters=[
+        ["Unit Details", "unit", "=", doc.get("custom_unit")]
+    ],
+    fields=["name"],
+    order_by="name asc"
+)
+    kra_options_json = json.dumps([k["name"] for k in kra_list]).replace('</script>','<\\/script>')
 
-	perf_grid_html = f"""
-	<div class="pg-wrap">
-		<table class="pg-table">
-			<thead>
-				<tr><th colspan="5" class="pg-main-title">PERFORMANCE RATING GRID</th></tr>
-				<tr>{pg_headers}</tr>
-			</thead>
-			<tbody><tr>{pg_cells}</tr></tbody>
-		</table>"""
+    kra_arabic_map = {
+        "Safety":        "السلامة",
+        "Quality":       "الجودة",
+        "Productivity":  "الإنتاجية",
+        "Absences":      "الغيابات",
+        "Teamwork":      "العمل الجماعي",
+        "Communication": "التواصل",
+        "Leadership":    "القيادة",
+        "Initiative":    "المبادرة",
+        "Integrity":     "النزاهة",
+    }
+    kra_arabic_map_json = json.dumps(kra_arabic_map).replace('</script>','<\\/script>')
 
-	if is_worker:
-		perf_grid_html += f"""
-	<div class="worker-criteria">
-		<div class="wc-title">⚙️ Evaluation Criteria</div>
-		<div class="wc-grid">
-			<div class="wc-card">
-				<div class="wc-card-title">📈 Productivity %</div>
-				<div class="wc-row"><span>1 - Poor</span><span>Below 86%</span></div>
-				<div class="wc-row"><span>2 - Acceptable</span><span>87% – 90%</span></div>
-				<div class="wc-row"><span>3 - Good</span><span>91% – 100%</span></div>
-				<div class="wc-row"><span>4 - Very Good</span><span>101% – 120%</span></div>
-				<div class="wc-row"><span>5 - Excellent</span><span>Above 120%</span></div>
-			</div>
-			<div class="wc-card">
-				<div class="wc-card-title">📅 Absences</div>
-				<div class="wc-row"><span>1 - Poor</span><span>7 Days +</span></div>
-				<div class="wc-row"><span>2 - Acceptable</span><span>5 – 6 Days</span></div>
-				<div class="wc-row"><span>3 - Good</span><span>3 – 4 Days</span></div>
-				<div class="wc-row"><span>4 - Very Good</span><span>1 – 2 Days</span></div>
-				<div class="wc-row"><span>5 - Excellent</span><span>Zero Unauthorized</span></div>
-			</div>
-		</div>
-	</div>"""
+    # ── Row map ────────────────────────────────────────────────────────────
+    goals = doc.get("goals") or []
+    row_map = {}
+    for tbl_idx, row in enumerate(goals):
+        assessor_raw   = flt(row.get("custom_assessor_score") or 0)
+        self_raw       = flt(row.get("custom_self_score") or 0)
+        weightage      = flt(row.get("per_weightage") or 0)
+        assessor_stars = round(assessor_raw * 5)
+        self_stars_val = round(self_raw * 5)
+        goal_score_val = round(assessor_stars * weightage / 100, 2)
+        row_map[tbl_idx] = {
+            "name":           cstr(row.name),
+            "cdt":            "Appraisal Goal",
+            "weightage":      weightage,
+            "assessor_stars": assessor_stars,
+            "self_stars":     self_stars_val,
+            "goal_score":     goal_score_val,
+            "total_score":    goal_score_val,
+            "kra":            cstr(row.get("kra") or ""),
+            "per_weightage":  weightage,
+        }
+    row_map_json = json.dumps(row_map).replace('</script>','<\\/script>')
+    def productivity_rating(pct):
+        if pct <= 86:  return 1
+        if pct <= 90:  return 2
+        if pct <= 100: return 3
+        if pct <= 120: return 4
+        return 5
+    # ── KRA Cards ──────────────────────────────────────────────────────────
+    cards = ""; card_idx = 0
+    for tbl_idx, row in enumerate(goals):
+        if (row.get("custom_unit") or "").strip() not in ["Common","Worker"]: continue
+        kra_name           = cstr(row.get("kra") or "")
+        custom_description = cstr(row.get("custom_description") or "")
+        weightage          = flt(row.get("per_weightage") or 0)
+        self_stars         = round(flt(row.get("custom_self_score") or 0) * 5)
+        assessor_stars     = round(flt(row.get("custom_assessor_score") or 0) * 5)
+        goal_score_val     = round(assessor_stars * weightage / 100, 2)
+        icon               = _kra_icon(kra_name)
+        pill_cls           = score_class(assessor_stars)
+        desc_safe          = safe(custom_description)
 
-	perf_grid_html += f"""
-		<div class="pg-oe-bar">
-			<span class="pg-oe-label" style='font-size:20px;'>OVERALL EFFECTIVENESS</span>
-			<span class="pg-oe-val" style='font-size:20px;' id="pg-oe-score">{total_goal_score_str or "0"}</span>
-		</div>
-	</div>"""
-	score_cards_html = f"""<div class="score-cards score-cards-single"><div class="score-cards">"""
-	if doc.get("workflow_state") != "Draft" and not is_worker:
-		score_cards_html +=f"""
-		<div class="score-card">
-			<div class="sc-label">OVERALL EFFECTIVENESS - SELF ASSESSMENT</div>
-			<div class="sc-val">{self_score_str}</div>
-			<div class="sc-sub">out of 5.00</div>
-		</div>"""
+        self_section_html = ""
+        # ── Special metric cards for PRODUCTIVITY and A ─────────────
+        if kra_name in ["Productivity", "Absences"] and is_worker:
+            # achieved_val = (flt(row.get("custom_achieved") or 0))
+            # absence_days = flt(row.get("custom_absence_days") or 0)
+            # icon         = "⚡" if kra_name == "Productivity" else "🗓️"
+            # pill_cls     = score_class(assessor_stars)
+            # assr_cursor  = "pointer" if assessor_editable else "default"
+            # assr_pointer = "auto" if assessor_editable else "none"   # ← NEW
 
-	# ── Score Summary Cards ────────────────────────────────────────────────
-	score_cards_html += f"""
-		<div class="score-card">
-			<div class="sc-label">OVERALL EFFECTIVENESS - ASSESSOR ASSESSMENT</div>
-			<div class="sc-val" id="summary-total-goal">{total_goal_score_str}</div>
-			<div class="sc-sub">out of 5.00</div>
-		</div>
-	</div></div>"""
+            # assessor_html_card = "".join(
+            #     f'<span class="kra-star {"checked" if s <= assessor_stars else ""}" '
+            #     f'data-tbl="{tbl_idx}" data-val="{s}" '
+            #     + (f'onclick="starClick(this)"' if assessor_editable else '') +
+            #     f' style="cursor:{assr_cursor};pointer-events:{assr_pointer};">'   # ← pointer-events added
+            #     f'{"★" if s <= assessor_stars else "☆"}</span>'
+            #     for s in range(1, 6))
+            if kra_name in ["Productivity", "Absences"] and is_worker:
+                achieved_val = (flt(row.get("custom_achieved") or 0))
+                absence_days = flt(row.get("custom_absence_days") or 0)
+                icon         = "⚡" if kra_name == "Productivity" else "🗓️"
+                pill_cls     = score_class(assessor_stars)
 
-	grade_js = safe_js(doc.get("custom_grade") or "")
+                # Always readonly — stars are auto-calculated from % or days input
+                assessor_html_card = "".join(
+                    f'<span class="kra-star {"checked" if s <= assessor_stars else ""}" '
+                    f'data-tbl="{tbl_idx}" data-val="{s}" '
+                    f'style="cursor:default;pointer-events:none;">'
+                    f'{"★" if s <= assessor_stars else "☆"}</span>'
+                    for s in range(1, 6))
 
-	html = f"""<!DOCTYPE html>
+            if kra_name == "Productivity":
+                inp_readonly = 'readonly' if not assessor_editable else ''
+                # desc_safe    = "Rating based on productivity % achieved. Below 87%=Poor, 87–90%=Acceptable, 91–100%=Good, 101–120%=Very Good, Above 120%=Excellent."
+                metric_block = f"""
+                <div class="mc-wrap">
+                    <div class="mc-row">
+                        <span class="mc-lbl">%</span>
+                        <input class="mc-inp" type="number" step="0.01" min="0"
+                            id="metric-achieved-{tbl_idx}"
+                            value="{achieved_val if achieved_val else ''}"
+                            placeholder="0.00"
+                            oninput="calcProductivity({tbl_idx})"
+                            {inp_readonly}/>
+                    </div>
+                </div>"""
+            else:
+                inp_readonly = 'readonly' if not assessor_editable else ''
+                # desc_safe    = "Rating based on unauthorized absence days. 0 days=Excellent, 1–2=Very Good, 3–4=Good, 5–6=Acceptable, 7+=Poor."
+                metric_block = f"""
+                <div class="mc-wrap">
+                    <div class="mc-row">
+                        <span class="mc-lbl">Days</span>
+                        <input class="mc-inp" type="number" step="1" min="0"
+                            id="metric-days-{tbl_idx}"
+                            value="{int(absence_days) if absence_days else 0}"
+                            placeholder=" "
+                            oninput="calcAbsences({tbl_idx})"
+                            {inp_readonly}/>
+                    </div>
+                </div>"""
+
+            cards += f"""
+            <div class="kra-card" id="kra-card-{card_idx}" data-tbl="{tbl_idx}"
+                data-desc="{desc_safe}"
+                onmouseenter="showKraTooltip(this)" onmouseleave="hideKraTooltip()">
+                <div class="kra-card-icon">{icon}</div>
+                <div class="kra-card-title">{safe(kra_name)}</div>
+                {metric_block}
+                <div class="kra-row-label" style="margin-top:7px;">Assessor</div>
+                <div class="star-row assessor-stars" id="card-assessor-{card_idx}">{assessor_html_card}</div>
+                <input type="hidden" id="metric-rating-{tbl_idx}" value="{assessor_stars}"/>
+                <div class="kra-card-score-wrap">
+                    <span class="score-pill {pill_cls}" id="card-pill-{card_idx}">{assessor_stars} / 5</span>
+                </div>
+            </div>"""
+            card_idx += 1
+            continue
+        if not is_worker:
+            self_cursor = "pointer" if self_editable else "default"
+            self_html = "".join(
+                f'<span class="kra-star {"checked" if s <= self_stars else ""}" '
+                f'data-tbl="{tbl_idx}" data-val="{s}" data-type="self" '
+                + (f'onclick="selfStarClick(this)"' if self_editable else '') +
+                f' style="cursor:{self_cursor}">{"★" if s <= self_stars else "☆"}</span>'
+                for s in range(1, 6))
+            self_section_html = f'''
+            <div class="kra-row-label">Self</div>
+            <div class="star-row self-stars" id="card-self-{card_idx}">{self_html}</div>'''
+
+        assessor_cursor = "pointer" if assessor_editable else "default"
+        assessor_html = "".join(
+            f'<span class="kra-star {"checked" if s <= assessor_stars else ""}" '
+            f'data-tbl="{tbl_idx}" data-val="{s}" '
+            + (f'onclick="starClick(this)"' if assessor_editable else '') +
+            f' style="cursor:{assessor_cursor}">{"★" if s <= assessor_stars else "☆"}</span>'
+            for s in range(1, 6))
+
+        # In the non-worker KRA card generation, replace:
+        assessor_section_html = ""
+        if is_published or is_assessor or is_admin:
+            assessor_section_html = f"""
+            <div class="kra-row-label" style="margin-top:6px;">Assessor</div>
+            <div class="star-row assessor-stars" id="card-assessor-{card_idx}">{assessor_html}</div>
+            <div class="kra-card-score-wrap">
+                <span class="score-pill {pill_cls}" id="card-pill-{card_idx}">{assessor_stars} / 5</span>
+            </div>"""
+        else:
+            assessor_section_html = """
+            <div class="kra-card-score-wrap" style="margin-top:6px;">
+                <span style="color:#9ca3af;font-size:11px;"></span>
+            </div>"""
+
+        cards += f"""
+        <div class="kra-card" id="kra-card-{card_idx}" data-tbl="{tbl_idx}" data-desc="{desc_safe}"
+            onmouseenter="showKraTooltip(this)" onmouseleave="hideKraTooltip()">
+            <div class="kra-card-icon">{icon}</div>
+            <div class="kra-card-title">{safe(kra_name)}</div>
+            {self_section_html}
+            {assessor_section_html}
+        </div>"""
+        # cards += f"""
+        # <div class="kra-card" id="kra-card-{card_idx}" data-tbl="{tbl_idx}" data-desc="{desc_safe}"
+        #      onmouseenter="showKraTooltip(this)" onmouseleave="hideKraTooltip()">
+        #     <div class="kra-card-icon">{icon}</div>
+        #     <div class="kra-card-title">{safe(kra_name)}</div>
+        #     {self_section_html}
+        #     <div class="kra-row-label" style="margin-top:6px;">Assessor</div>
+        #     <div class="star-row assessor-stars" id="card-assessor-{card_idx}">{assessor_html}</div>
+        #     <div class="kra-card-score-wrap">
+        #         <span class="score-pill {pill_cls}" id="card-pill-{card_idx}">{assessor_stars} / 5</span>
+        #     </div>
+        # </div>"""
+        card_idx += 1
+
+    kra_cards_html = f"""
+    <div class="collapsible-section" style="text-align:center;">
+        <div class="section collapsible-header" onclick="toggleSection(this)">
+            <span style='font-size:15px;'>Galfar Values</span><span class="coll-icon">▼</span>
+        </div>
+        <div class="collapsible-body" style="text-align:center;">
+            <div class="kra-cards-grid" style="text-align:center;">{cards}</div>
+            <div id="kra-tooltip-panel" class="kra-tooltip-panel" style="display:none;text-align:center;"></div>
+        </div>
+    </div>""" if cards else ""
+
+    # ── Goals Table ────────────────────────────────────────────────────────
+    goal_rows = ""; index = 0
+    for tbl_idx, row in enumerate(goals):
+        if (row.get("custom_unit") or "").strip() in ["Common" ,"Worker"]:
+            if row.get("kra") not in ["PRODUCTIVITY","ABSENCES"]: continue
+        index += 1
+        kra_name           = cstr(row.get("kra") or "")
+        weightage          = flt(row.get("per_weightage") or 0)
+        custom_description = cstr(row.get("custom_description") or "")
+        self_stars         = round(flt(row.get("custom_self_score") or 0) * 5)
+        assessor_stars     = round(flt(row.get("custom_assessor_score") or 0) * 5)
+        goal_score_val     = round(assessor_stars * weightage / 100, 2)
+        pill_cls           = score_class(assessor_stars)
+        kra_name_safe      = safe(kra_name) or  ""
+        # kra_name_safe      = safe(kra_name) if row.get("custom_is_new_goal") else ""
+
+        kra_td = f"""
+            <td class="col-goal">
+            <div class="edit-cell">
+                <input class="kra-input" type="text"
+                    data-tbl="{tbl_idx}" data-field="kra"
+                    data-kra-english="{kra_name_safe}"
+                    value="{kra_name_safe}" placeholder="Add KRA..."
+                    autocomplete="off"
+                    oninput="filterKraDropdown(this)"
+                    onfocus="showKraDropdown(this)"
+                    onblur="hideKraDropdownDelayed(this)"
+                    {'readonly' if not self_editable else ''}
+                />
+            </div>
+        </td>"""
+
+        wt_td = f'<td class="col-weight" style="text-align:center;">{weightage}%</td>'
+
+        if not is_worker:
+            self_cursor = "pointer" if self_editable else "default"
+            self_stars_html = "".join(
+                f'<span class="kra-star {"checked" if s <= self_stars else ""}" '
+                f'data-tbl="{tbl_idx}" data-val="{s}" data-type="self" '
+                + (f'onclick="selfStarClick(this)"' if self_editable else '') +
+                f' style="cursor:{self_cursor}">{"★" if s <= self_stars else "☆"}</span>'
+                for s in range(1, 6))
+            self_td = f"""
+            <td class="col-stars" style="text-align:center;">
+                <div class="star-row self-stars center-stars" id="tbl-self-{tbl_idx}">{self_stars_html}</div>
+                <div class="score-sub"><span id="tbl-self-score-{tbl_idx}">{self_stars}</span> / 5</div>
+            </td>"""
+        else:
+            self_td = ""
+
+        assessor_cursor = "pointer" if assessor_editable else "default"
+        assessor_html = "".join(
+            f'<span class="kra-star {"checked" if s <= assessor_stars else ""}" '
+            f'data-tbl="{tbl_idx}" data-val="{s}" '
+            + (f'onclick="starClick(this)"' if assessor_editable else '') +
+            f' style="cursor:{assessor_cursor}">{"★" if s <= assessor_stars else "☆"}</span>'
+            for s in range(1, 6))
+        if show_assessor_stars:
+            assessor_td = f"""
+            <td class="col-stars" style="text-align:center;">
+                <div class="star-row assessor-stars center-stars" id="tbl-assessor-{tbl_idx}">{assessor_html}</div>
+                <div class="score-sub"><span id="tbl-score-{tbl_idx}">{assessor_stars}</span> / 5</div>
+            </td>
+            <td class="col-pill" style="text-align:center;">
+                <span class="score-pill {pill_cls}" id="tbl-pill-{tbl_idx}">{assessor_stars} / 5</span>
+            </td>"""
+        else:
+            assessor_td = """
+            <td class="col-stars" style="text-align:center;">
+                <div style="color:#9ca3af;font-size:12px;">—</div>
+            </td>
+            <td class="col-pill" style="text-align:center;">
+                <span style="color:#9ca3af;font-size:12px;">—</span>
+            </td>"""
+        # goal_rows += f"""
+        # <tr id="goal-row-{tbl_idx}" data-tbl="{tbl_idx}" data-rowname="{safe(row.name)}">
+        #     <td class="col-no">{index}</td>
+        #     {kra_td}
+        #     <td class="col-desc">
+        #         <div class="desc-cell" id="desc-cell-{tbl_idx}" title="{safe(custom_description)}">{safe(custom_description)}</div>
+        #     </td>
+        #     {wt_td}
+        #     {self_td}
+        #     <td class="col-stars" style="text-align:center;">
+        #         <div class="star-row assessor-stars center-stars" id="tbl-assessor-{tbl_idx}">{assessor_html}</div>
+        #         <div class="score-sub"><span id="tbl-score-{tbl_idx}">{assessor_stars}</span> / 5</div>
+        #     </td>
+        #     <td class="col-pill" style="text-align:center;">
+        #         <span class="score-pill {pill_cls}" id="tbl-pill-{tbl_idx}">{assessor_stars} / 5</span>
+        #     </td>
+        # </tr>"""
+        goal_rows += f"""
+            <tr id="goal-row-{tbl_idx}" data-tbl="{tbl_idx}" data-rowname="{safe(row.name)}">
+                <td class="col-no">{index}</td>
+                {kra_td}
+                <td class="col-desc">
+                    <div class="desc-cell" id="desc-cell-{tbl_idx}" title="{safe(custom_description)}">{safe(custom_description)}</div>
+                </td>
+                {wt_td}
+                {self_td}
+                {assessor_td}
+            </tr>"""
+
+    self_score_th = '' if is_worker else '<th class="col-stars">Self Score</th>'
+    col_self_col  = '' if is_worker else '<col class="col-stars">'
+
+    goals_section = f"""
+    <div class="collapsible-section">
+        <div class="section collapsible-header" onclick="toggleSection(this)">
+            <span style='font-size:15px;'>Goals</span><span class="coll-icon">▼</span>
+        </div>
+        <div class="collapsible-body">
+            <div class="table-scroll">
+            <table class="child-table goals-table" id="goals-table">
+                <colgroup>
+                    <col class="col-no"><col class="col-goal"><col class="col-desc">
+                    <col class="col-weight">{col_self_col}<col class="col-stars"><col class="col-pill">
+                </colgroup>
+                <thead><tr>
+                    <th class="col-no">No.</th>
+                    <th class="col-goal">Goal</th>
+                    <th class="col-desc">Description</th>
+                    <th class="col-weight">Wt %</th>
+                    {self_score_th}
+                    <th class="col-stars">Assessor Score</th>
+                    <th class="col-pill">Rating</th>
+                </tr></thead>
+                <tbody id="goals-tbody">{goal_rows}</tbody>
+            </table></div>
+            <div id="goals-save-status" style="margin-top:6px;font-size:12px;color:var(--green);display:none;">✓ Saved</div>
+        </div>
+    </div>""" if goal_rows else ""
+
+    # ── Score summary ──────────────────────────────────────────────────────
+    total_goal_score_str = doc.get("total_score") or 0 if doc.get("workflow_state") == "Draft" else doc.get("total_score")
+    self_score_str       = doc.get("custom_total_self_score" or 0)
+
+    # ── Assessor ───────────────────────────────────────────────────────────
+    reviewer_name  = doc.get("custom_assessor_name") or ""
+    reviewer_id    = frappe.db.get_value("Employee", doc.get("custom_assessor"), "designation") or ""
+    assessor_image = None
+    if doc.get("custom_assessor"):
+        assessor_image = frappe.db.get_value("Employee", doc.custom_assessor, "image")
+
+    # ── Dates / misc ───────────────────────────────────────────────────────
+    start_date = formatdate(doc.get("start_date"))             if doc.get("start_date")             else ""
+    end_date   = formatdate(doc.get("end_date"))               if doc.get("end_date")               else ""
+    doj        = formatdate(doc.get("custom_date_of_joining")) if doc.get("custom_date_of_joining") else ""
+
+    pre_exp    = flt(doc.get("custom_previous_work_experience"))
+    galfar_exp = flt(doc.get("custom_internal_work_experience"))
+    exp_str    = f"Pre-Galfar: {int(pre_exp)} Years, Galfar : {galfar_exp:.2f} Years"
+
+    status_label = doc.get('custom_appraisal_status') if doc.get("custom_appraisal_status") else "Draft"
+
+    if doc.get("workflow_state") in ["Draft", "Pending for Assessor"]:
+        status_class = "draft"
+    elif doc.get("workflow_state") in ["Approved", "Accepted"]:
+        status_class = "approved"
+    else:
+        status_class = "draft"
+
+    # ── Performance Grid ───────────────────────────────────────────────────
+    PG_COLS = [
+        {"num":"1","label":"Excellent",
+         "icon_svg":'<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px;"><polygon points="10,2 12.5,7.5 18.5,8 14,12.5 15.5,18.5 10,15.5 4.5,18.5 6,12.5 1.5,8 7.5,7.5" fill="#b8860b" opacity=".2" stroke="#b8860b" stroke-width="1.2" stroke-linejoin="round"/></svg>',
+         "color":"#b8860b","light":"#fefce8","border":"#fde68a","text":"#78530a",
+         "bar":"linear-gradient(90deg,#b8860b,#d4a017)"},
+        {"num":"2","label":"Very Good",
+         "icon_svg":'<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px;"><circle cx="10" cy="10" r="9" fill="#15803d" opacity=".12" stroke="#15803d" stroke-width="1.5"/><polyline points="5,10 8.5,13.5 15,7" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="8,10 11.5,13.5 18,7" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".5"/></svg>',
+         "color":"#15803d","light":"#f0fdf5","border":"#bbf7d0","text":"#0d5c2b",
+         "bar":"linear-gradient(90deg,#15803d,#22c55e)"},
+        {"num":"3","label":"Good",
+         "icon_svg":'<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px;"><circle cx="10" cy="10" r="9" fill="#0369a1" opacity=".12" stroke="#0369a1" stroke-width="1.5"/><polyline points="5.5,10.5 8.5,13.5 14.5,7" stroke="#0369a1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+         "color":"#0369a1","light":"#f0f7fd","border":"#bae0f7","text":"#024e7a",
+         "bar":"linear-gradient(90deg,#0369a1,#0ea5e9)"},
+        {"num":"4","label":"Acceptable",
+         "icon_svg":'<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px;"><circle cx="10" cy="10" r="9" fill="#c06000" opacity=".13" stroke="#c06000" stroke-width="1.5"/><line x1="6" y1="10" x2="14" y2="10" stroke="#c06000" stroke-width="2.2" stroke-linecap="round"/></svg>',
+         "color":"#c06000","light":"#fff8f0","border":"#fdd9aa","text":"#7a3d00",
+         "bar":"linear-gradient(90deg,#c06000,#e07820)"},
+         {"num":"5","label":"Poor",
+         "icon_svg":'<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px;"><circle cx="10" cy="10" r="9" fill="#CE1426" opacity=".15" stroke="#CE1426" stroke-width="1.5"/><line x1="6" y1="6" x2="14" y2="14" stroke="#CE1426" stroke-width="2" stroke-linecap="round"/><line x1="14" y1="6" x2="6" y2="14" stroke="#CE1426" stroke-width="2" stroke-linecap="round"/></svg>',
+         "color":"#CE1426","light":"#fdf2f3","border":"#f5c2c7","text":"#8a0d1a",
+         "bar":"linear-gradient(90deg,#CE1426,#e84a5a)"},
+        
+    ]
+    PG_DESCS = [
+        "Consistently far exceeds expectations; acts as a role model and champions this value to others.",
+        "Frequently goes above and beyond standard requirements regarding this value.",
+        "Consistently demonstrates this value in day-to-day work; meets the standard.",
+        "Performance is below expectations; behavior is contrary to company standards.",
+        "Inconsistent demonstration of this value; requires coaching or behavioral adjustment.",
+    ]
+    pg_headers = ""; pg_cells = ""
+    for i, col in enumerate(PG_COLS):
+        dots = "".join(
+    f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 2px;background:{col["color"] if j < (5 - i) else col["border"]};"></span>'
+    for j in range(5)
+)
+        pg_headers += f"""
+        <th class="pg-col-head" style="background:{col['light']};border-right:1px solid {col['border']};border-bottom:4px solid {col['color']};">
+            <div style="width:46px;height:46px;border-radius:12px;background:{col['light']};border:1.5px solid {col['border']};display:flex;align-items:center;justify-content:center;margin:0 auto 10px;box-shadow:0 2px 8px {col['color']}22;">
+                {col['icon_svg']}
+            </div>
+            <span class="pg-num-badge" style="background:{col['color']};box-shadow:0 2px 6px {col['color']}44;">{col['num']}</span>
+            <span class="pg-col-label" style="color:{col['text']};font-size:12px;font-weight:700;">{col['label']}</span>
+            <div style="margin-top:8px;line-height:1;">{dots}</div>
+        </th>"""
+        pg_cells += f"""
+        <td class="pg-desc-cell" style="background:{col['light']};border-right:1px solid {col['border']};">
+            <div style="height:4px;background:{col['bar']};opacity:.85;"></div>
+            <p class="pg-desc-text" style="color:#1e293b;">{PG_DESCS[i]}</p>
+        </td>"""
+    if is_admin:
+        manual_lock = f"""<tr>
+            <td>
+                <div class="lbl"></div>
+                <div class="val">
+                    <input type="checkbox" id="chk-restricted"
+                        {'checked' if doc.get("custom_restricted") else ''}
+                        onchange="toggleRestricted(this)"
+                        style="width:18px;height:18px;cursor:pointer;accent-color:var(--primary);"
+                    />
+                </div>
+            </td>
+            <td><div class="lbl">Auto Lock</div><div class="val"></div></td>
+            <td><div class="lbl">Locking Date</div><div class="val">{formatdate(doc.get("custom_locking_date") or "")}</div></td>
+            <td><div class="lbl">Manual Lock</div><div class="val"></div></td>
+        </tr>"""
+    else:
+        manual_lock =""
+    # ── Previous Ratings ──────────────────────────────────────────────────
+    custom_previous_rating = frappe.db.sql("""
+        SELECT
+            child.year,
+            child.rating
+        FROM `tabPrevious Rating` AS child
+        INNER JOIN `tabEmployee` AS emp
+            ON child.parent = emp.name
+        WHERE emp.custom_gec_no = %s
+        AND IFNULL(child.appraisal, '') != %s
+        ORDER BY child.year DESC
+    """, (
+        doc.get("custom_gec_no"),
+        doc.get("name")
+    ), as_dict=True)
+    
+    previous_rating_html = ""
+    if custom_previous_rating:
+        previous_rating_html = """<tr>
+            <td colspan="4"><div style="font-size:12px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;color:{T['section_color']};margin-bottom:4px;text-align:center">Previous Ratings</div></td>
+        </tr>"""
+        for idx in range(0, len(custom_previous_rating), 4):
+            chunk = custom_previous_rating[idx:idx + 4]
+            pr_cells = ""
+            for i in chunk:
+                pr_cells += f'<td><div class="lbl">Rating {i.year}</div><div class="val">{i.rating if i.rating else "-"}</div></td>'
+            for _ in range(4 - len(chunk)):
+                pr_cells += '<td></td>'
+            previous_rating_html += f"<tr>{pr_cells}</tr>"
+    else:
+        previous_rating_html = """<tr>
+            <td colspan="4"><div style="font-size:12px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;color:{T['section_color']};margin-bottom:4px;text-align:center">Previous Ratings</div></td>
+        </tr>
+        <tr>
+            <td colspan="4"><div style="text-align:center;color:#94a3b8;font-size:13px;padding:8px 0;">-</div></td>
+        </tr>"""
+    # ── Performance Grid HTML ──────────────────────────────────────────────
+    perf_grid_html = f"""
+    <div class="pg-wrap">
+        <table class="pg-table">
+            <thead>
+                <tr><th colspan="5" class="pg-main-title">PERFORMANCE RATING GRID</th></tr>
+                <tr>{pg_headers}</tr>
+            </thead>
+            <tbody><tr>{pg_cells}</tr></tbody>
+        </table>"""
+
+    if is_worker:
+        perf_grid_html += f"""
+    <div class="worker-criteria">
+        <div class="wc-title">⚙️ Evaluation Criteria</div>
+        <div class="wc-grid">
+            <div class="wc-card">
+                <div class="wc-card-title">📈 Productivity %</div>
+                <div class="wc-row"><span>1 - Poor</span><span>Below 86%</span></div>
+                <div class="wc-row"><span>2 - Acceptable</span><span>87% – 90%</span></div>
+                <div class="wc-row"><span>3 - Good</span><span>91% – 100%</span></div>
+                <div class="wc-row"><span>4 - Very Good</span><span>101% – 120%</span></div>
+                <div class="wc-row"><span>5 - Excellent</span><span>Above 120%</span></div>
+            </div>
+            <div class="wc-card">
+                <div class="wc-card-title">📅 Absences</div>
+                <div class="wc-row"><span>1 - Poor</span><span>7 Days +</span></div>
+                <div class="wc-row"><span>2 - Acceptable</span><span>5 – 6 Days</span></div>
+                <div class="wc-row"><span>3 - Good</span><span>3 – 4 Days</span></div>
+                <div class="wc-row"><span>4 - Very Good</span><span>1 – 2 Days</span></div>
+                <div class="wc-row"><span>5 - Excellent</span><span>Zero Unauthorized</span></div>
+            </div>
+        </div>
+    </div>"""
+    if show_oe:
+        perf_grid_html += f"""
+            <div class="pg-oe-bar">
+                <span class="pg-oe-label" style='font-size:20px;'>OVERALL EFFECTIVENESS</span>
+                <span class="pg-oe-val" style='font-size:20px;' id="pg-oe-score">{total_goal_score_str or "0"}</span>
+            </div>
+        </div>"""
+
+    # ── Score Summary Cards ────────────────────────────────────────────────
+    score_cards_html = """<div class="score-cards score-cards-single"><div class="score-cards">"""
+    if not is_worker:
+        score_cards_html += f"""
+        <div class="score-card">
+            <div class="sc-label">OVERALL EFFECTIVENESS - SELF ASSESSMENT</div>
+            <div class="sc-val">{self_score_str}</div>
+            <div class="sc-sub">out of 5.00</div>
+        </div>"""
+    if is_published or is_assessor or is_admin:
+        score_cards_html += f"""
+            <div class="score-card">
+                <div class="sc-label">OVERALL EFFECTIVENESS - ASSESSOR ASSESSMENT</div>
+                <div class="sc-val" id="summary-total-goal">{total_goal_score_str}</div>
+                <div class="sc-sub">out of 5.00</div>
+            </div>
+    </div></div>"""
+
+    grade_js = safe_js(doc.get("custom_grade") or "")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # HTML OUTPUT
+    # ══════════════════════════════════════════════════════════════════════
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
-	<meta charset="UTF-8"/>
-	<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-	<title>Appraisal – {safe(doc.employee_name)}</title>
-	<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet"/>
-	<style>
-		:root {{
-			--red:         #CE1426;
-			--red-dark:    #8a0d1a;
-			--red-mid:     #a81020;
-			--red-deep:    #5e0911;
-			--red-light:   #fdf0f2;
-			--red-border:  #f5c2ca;
-			--gold:        #c9a84c;
-			--gold-lt:     #e8c97a;
-			--gold-deep:   #8B6508;
-			--gold-bright: #D4A017;
-			--gold-pale:   #FBF0C0;
-			--gold-dim:    rgba(201,168,76,0.15);
-			--gold-glow:   rgba(201,168,76,0.40);
-			--gold-border: rgba(201,168,76,0.50);
-			--cream:       #faf8f4;
-			--white:       #ffffff;
-			--border:      #edd8b0;
-			--text:        #1a1a2e;
-			--label:       #6b7280;
-			--muted:       #9ca3af;
-			--odd-row:     #fff9f0;
-			--even-row:    #ffffff;
-			--green:       #2d7a4f;
-			--amber:       #b45309;
-			--self-blue:   #3b82f6;
-			--shadow-sm:   0 1px 4px rgba(200,16,46,.08);
-			--shadow-md:   0 4px 20px rgba(200,16,46,.12);
-			--shadow-lg:   0 24px 64px rgba(200,16,46,.15);
-			--shadow-gold: 0 4px 24px rgba(201,168,76,.30);
-		}}
-		*{{ box-sizing:border-box; margin:0; padding:0; }}
-		body{{ font-family:'DM Sans',sans-serif; background:var(--cream); padding:40px 20px; color:var(--text); }}
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Appraisal – {safe(doc.employee_name)}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet"/>
+    <style>
+        :root {{
+            --primary:       {T['primary']};
+            --primary-dark:  {T['primary_dark']};
+            --primary-mid:   {T['primary_mid']};
+            --accent:        {T['accent']};
+            --accent-lt:     {T['accent_lt']};
+            --accent-deep:   {T['accent_deep']};
+            --accent-bright: {T['accent_bright']};
+            --accent-pale:   {T['accent_pale']};
+            --accent-dim:    {T['accent_dim']};
+            --accent-glow:   {T['accent_glow']};
+            --accent-border: {T['accent_border']};
+            --cream:         #faf8f4;
+            --white:         #ffffff;
+            --text:          #1a1a2e;
+            --label:         #6b7280;
+            --muted:         #9ca3af;
+            --odd-row:       {T['odd_row']};
+            --even-row:      {T['even_row']};
+            --green:         #2d7a4f;
+            --self-blue:     #3b82f6;
+            --shadow-sm:     {T['shadow_sm']};
+            --shadow-md:     {T['shadow_md']};
+            --shadow-lg:     {T['shadow_lg']};
+        }}
+        *{{ box-sizing:border-box; margin:0; padding:0; }}
+        body{{ font-family:'DM Sans',sans-serif; background:var(--cream); padding:40px 20px; color:var(--text); }}
 
-		.gold-frame {{
-			padding:5px; border-radius:26px;
-			background: conic-gradient(from 0deg,#5c3d08 0deg,#c9a84c 40deg,#f5d97a 80deg,#e8c97a 110deg,#c9a84c 150deg,#8B6508 190deg,#D4A017 230deg,#f5d97a 260deg,#c9a84c 300deg,#8B6508 330deg,#5c3d08 360deg);
-			box-shadow:0 0 0 1px rgba(201,168,76,.7),0 0 24px rgba(201,168,76,.45),0 0 60px rgba(201,168,76,.18),0 12px 48px rgba(200,16,46,.20);
-			animation: frame-pulse 5s ease-in-out infinite;
-		}}
-		@keyframes frame-pulse {{
-			0%,100% {{ box-shadow:0 0 0 1px rgba(201,168,76,.7),0 0 24px rgba(201,168,76,.45),0 0 60px rgba(201,168,76,.18),0 12px 48px rgba(200,16,46,.20); }}
-			50%      {{ box-shadow:0 0 0 2px rgba(201,168,76,.9),0 0 36px rgba(201,168,76,.65),0 0 90px rgba(201,168,76,.30),0 12px 48px rgba(200,16,46,.25); }}
-		}}
-		.form{{ background:var(--white); border-radius:22px; overflow:hidden; box-shadow:var(--shadow-lg); }}
+        /* ── FRAME ── */
+        .gold-frame {{
+            padding:5px; border-radius:26px;
+            background:{T['frame_grad']};
+            box-shadow:0 0 0 1px {T['frame_glow1']},0 0 24px {T['frame_glow2']},0 0 60px {T['frame_glow3']},0 12px 48px {T['frame_glow4']};
+            animation:frame-pulse 5s ease-in-out infinite;
+        }}
+        @keyframes frame-pulse {{
+            0%,100% {{ box-shadow:0 0 0 1px {T['frame_glow1']},0 0 24px {T['frame_glow2']},0 0 60px {T['frame_glow3']},0 12px 48px {T['frame_glow4']}; }}
+            50%      {{ box-shadow:0 0 0 2px {T['frame_glow1']},0 0 36px {T['frame_glow2']},0 0 90px {T['frame_glow3']},0 12px 48px {T['frame_glow4']}; }}
+        }}
+        .form{{ background:var(--white); border-radius:22px; overflow:hidden; box-shadow:var(--shadow-lg); }}
 
-		.header{{
-			background:linear-gradient(135deg,var(--red-dark) 0%,var(--red) 55%,#fdf5f6 100%);
-			padding:32px 48px 28px; position:relative; overflow:hidden;
-			border-bottom:3px solid var(--gold);
-		}}
-		.header::before{{ content:''; position:absolute; top:-80px; right:-80px; width:340px; height:340px; border-radius:50%; background:rgba(255,255,255,.05); pointer-events:none; }}
-		.header::after{{ content:''; position:absolute; bottom:-60px; left:-60px; width:220px; height:220px; border-radius:50%; background:rgba(0,0,0,.07); pointer-events:none; }}
-		.header-ring{{ position:absolute; top:-40px; right:80px; width:200px; height:200px; border-radius:50%; border:40px solid rgba(201,168,76,.06); pointer-events:none; }}
-		.doc-meta{{ position:absolute; top:20px; right:40px; text-align:right; z-index:2; }}
-		.doc-no{{ font-size:12px; font-weight:700;  letter-spacing:1.5px; }}
-		.doc-status{{
-		display:inline-block;
-		margin-top:6px;
-		padding:3px 13px;
-		border-radius:20px;
-		font-size:11px;
-		font-weight:700;
-		letter-spacing:.5px;
-		}}
+        /* ── HEADER ── */
+        .header{{
+            background:{T['header_grad']};
+            padding:32px 48px 28px; position:relative; overflow:hidden;
+            border-bottom:3px solid {T['header_border']};
+        }}
+        .header::before{{ content:''; position:absolute; top:-80px; right:-80px; width:340px; height:340px; border-radius:50%; background:rgba(255,255,255,.05); pointer-events:none; }}
+        .header::after{{ content:''; position:absolute; bottom:-60px; left:-60px; width:220px; height:220px; border-radius:50%; background:rgba(0,0,0,.07); pointer-events:none; }}
+        .header-ring{{ position:absolute; top:-40px; right:80px; width:200px; height:200px; border-radius:50%; border:40px solid {T['accent_dim']}; pointer-events:none; }}
 
-		/* Draft Status - Yellow */
-		.doc-status.draft{{
-			background:#D4A017;
-			color:black;
-			border:1px solid black;
-		}}
+        .doc-meta{{ position:absolute; top:20px; right:40px; text-align:right; z-index:2; }}
+        .doc-no{{ font-size:12px; font-weight:700; letter-spacing:1.5px; color:black; }}
+        .doc-status{{ display:inline-block; margin-top:6px; padding:3px 13px; border-radius:20px; font-size:11px; font-weight:700; letter-spacing:.5px; }}
+        .doc-status.draft{{ background:#D4A017; color:#000; border:1px solid #000; }}
+        .doc-status.approved{{ background:#d4edda; color:#155724; border:1px solid #155724; }}
 
-		/* Approved Status - Green */
-		.doc-status.approved{{
-			background:#d4edda;
-			color:dark-green;
-			border:1px solid black;
-		}}
-		.logo-html{{
-			position:absolute;
-			right:1px;
-			top:50px;
-			padding:10px 18px;
-			border-radius:8px;
-			display:inline-flex;
-			align-items:right;
-			justify-content:right;
-		}}
+        .logo-html{{ position:absolute; right:1px; top:50px; padding:10px 18px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; }}
+        .logo-html img{{ max-height:60px; width:auto; display:block; }}
 
-		.logo-html img{{
-			max-height:60px;
-			width:auto;
-			display:block;
-		}}
-		.header-inner{{ display:flex; align-items:center; gap:28px; position:relative; z-index:1; }}
-		.emp-avatar{{
-			width:114px; height:114px; border-radius:50%; flex-shrink:0;
-			background:linear-gradient(145deg,var(--red-dark),var(--red-mid));
-			overflow:hidden; display:flex; align-items:center; justify-content:center;
-			border:3px solid var(--gold);
-			box-shadow:0 0 0 5px rgba(201,168,76,.22),0 0 0 9px rgba(201,168,76,.08),0 8px 28px rgba(0,0,0,.35);
-		}}
-		.emp-avatar img{{ width:100%; height:100%; object-fit:cover; border-radius:50%; }}
-		.emp-avatar-initials{{ font-family:'Playfair Display',serif; font-size:36px; color:var(--gold); }}
-		.header-info{{ flex:1; }}
-		.emp-id{{ font-size:10px; font-weight:700; letter-spacing:3px; text-transform:uppercase; color:var(--gold); margin-bottom:5px; }}
-		.emp-name{{ font-family:'Playfair Display',serif; font-size:28px; color:#fff; margin-bottom:6px; line-height:1.2; }}
-		.emp-sub{{ font-size:13px; color:rgba(255,255,255,.65); letter-spacing:.3px; }}
-		.badges{{ display:flex; gap:9px; flex-wrap:wrap; margin-top:13px; }}
-		.badge{{ padding:4px 13px; border-radius:20px; font-size:11px; font-weight:500; }}
-		.badge-gold{{ background:rgba(201,168,76,.18); color:var(--gold-lt); border:1px solid rgba(201,168,76,.38); }}
-		.badge-white{{ background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); border:1px solid rgba(255,255,255,.2); }}
-		.stripe{{ height:5px; background:linear-gradient(90deg,var(--red-dark) 0%,var(--red) 25%,var(--gold) 55%,var(--gold-lt) 75%,var(--gold) 90%,var(--red-dark) 100%); box-shadow:0 2px 8px rgba(201,168,76,.3); }}
+        .header-inner{{ display:flex; align-items:center; gap:28px; position:relative; z-index:1; }}
+        .emp-avatar{{
+            width:114px; height:114px; border-radius:50%; flex-shrink:0;
+            background:{T['emp_avatar_bg']};
+            overflow:hidden; display:flex; align-items:center; justify-content:center;
+            border:3px solid {T['accent_border_hex']};
+            box-shadow:0 0 0 5px {T['accent_dim']},0 0 0 9px {T['accent_dim']},0 8px 28px rgba(0,0,0,.35);
+        }}
+        .emp-avatar img{{ width:100%; height:100%; object-fit:cover; border-radius:50%; }}
+        .emp-avatar-initials{{ font-family:'Playfair Display',serif; font-size:36px; color:{T['accent_lt']}; }}
+        .header-info{{ flex:1; }}
+        .emp-name{{ font-family:'Playfair Display',serif; font-size:28px; color:#fff; margin-bottom:6px; line-height:1.2; }}
+        .emp-sub{{ font-size:13px; color:rgba(255,255,255,.65); letter-spacing:.3px; }}
+        .badges{{ display:flex; gap:9px; flex-wrap:wrap; margin-top:13px; }}
+        .badge{{ padding:4px 13px; border-radius:20px; font-size:11px; font-weight:500; }}
+        .badge-accent{{ background:{T['badge_gold_bg']}; color:{T['badge_gold_clr']}; border:1px solid {T['badge_gold_bdr']}; }}
+        .badge-white{{ background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); border:1px solid rgba(255,255,255,.2); }}
 
-		.body{{ padding:36px 48px 44px; }}
-		.collapsible-section{{ margin-bottom:0; }}
-		.collapsible-body{{ overflow:visible; transition:max-height .35s ease, opacity .25s ease; max-height:9999px; opacity:1; }}
-		.collapsible-body.collapsed{{ max-height:0 !important; opacity:0; overflow:hidden !important; }}
-		.section{{
-			font-size:12px; font-weight:700; letter-spacing:3px; text-transform:uppercase;
-			color:var(--red); display:flex; align-items:center; gap:12px;
-			margin-bottom:18px; margin-top:32px; cursor:pointer; user-select:none;
-		}}
-		.section:first-child{{ margin-top:0; }}
-		.section::after{{ content:''; flex:1; height:2px; background:linear-gradient(90deg,var(--gold-bright),rgba(201,168,76,.3),transparent); border-radius:2px; }}
-		.coll-icon{{ font-size:10px; color:var(--gold); transition:transform .3s; flex-shrink:0; margin-left:4px; }}
-		.coll-icon.rotated{{ transform:rotate(-90deg); }}
+        /* ── STRIPE ── */
+        .stripe{{ height:5px; background:{T['stripe']}; box-shadow:0 2px 8px {T['stripe_glow']}; }}
 
-		.info-table{{
-			width:100%; border-collapse:collapse;
-			border:1.5px solid var(--gold-border);
-			border-radius:12px; overflow:hidden; margin-bottom:4px;
-			box-shadow:0 2px 12px rgba(201,168,76,.12);
-		}}
-		.info-table tr:nth-child(odd) td{{ background:var(--odd-row); }}
-		.info-table tr:nth-child(even) td{{ background:var(--even-row); }}
-		.info-table tr:last-child td{{ border-bottom:none; }}
-		.info-table td{{
-			padding:13px 20px; border-bottom:1px solid rgba(201,168,76,.2);
-			border-right:1px solid rgba(201,168,76,.2); vertical-align:top; width:25%;
-		}}
-		.info-table td:last-child{{ border-right:none; }}
-		.lbl{{ font-size:12px; font-weight:700; letter-spacing:1.8px; text-transform:uppercase; color:var(--gold-deep); margin-bottom:4px; }}
-		.val{{ font-size:13.5px; font-weight:500; color:var(--text); }}
-		.val.mono{{ font-family:'Courier New',monospace; font-size:13px; }}
-		.assessor-cell{{ display:flex; align-items:center; gap:10px; }}
-		.ass-avatar-sm{{
-			width:38px; height:38px; border-radius:50%; flex-shrink:0;
-			background:linear-gradient(145deg,var(--red-dark),var(--red));
-			display:flex; align-items:center; justify-content:center;
-			border:2px solid var(--gold); overflow:hidden;
-			box-shadow:0 0 0 2px rgba(201,168,76,.2);
-		}}
-		.ass-avatar-sm img{{ width:100%; height:100%; object-fit:cover; border-radius:50%; }}
-		.ass-initials-sm{{ font-family:'Playfair Display',serif; font-size:14px; color:var(--gold); }}
-		.ass-name-sm{{ font-size:13px; font-weight:600; color:var(--text); }}
-		.ass-id-sm{{ font-size:11px; color:var(--muted); margin-top:1px; }}
+        /* ── BODY ── */
+        .body{{ padding:36px 48px 44px; }}
+        .collapsible-section{{ margin-bottom:0; }}
+        .collapsible-body{{ overflow:visible; transition:max-height .35s ease,opacity .25s ease; max-height:9999px; opacity:1; }}
+        .collapsible-body.collapsed{{ max-height:0 !important; opacity:0; overflow:hidden !important; }}
+        .section{{
+            font-size:12px; font-weight:700; letter-spacing:3px; text-transform:uppercase;
+            color:{T['section_color']}; display:flex; align-items:center; gap:12px;
+            margin-bottom:18px; margin-top:32px; cursor:pointer; user-select:none;
+        }}
+        .section:first-child{{ margin-top:0; }}
+        .section::after{{ content:''; flex:1; height:2px; background:{T['section_line']}; border-radius:2px; }}
+        .coll-icon{{ font-size:10px; color:{T['accent_bright']}; transition:transform .3s; flex-shrink:0; margin-left:4px; }}
+        .coll-icon.rotated{{ transform:rotate(-90deg); }}
 
-		/* ── GOALS TABLE ── */
-		.table-scroll{{ overflow-x:auto; overflow-y:visible; }}
-		.goals-table{{
-			width:100%; table-layout:auto; border-collapse:collapse;
-			border:1.5px solid var(--gold-border);
-			border-radius:12px; font-size:13px;
-			box-shadow:0 2px 12px rgba(201,168,76,.12);
-		}}
-		.goals-table thead tr{{ background:linear-gradient(135deg,var(--red-dark) 0%,var(--red) 100%); border-bottom:2px solid var(--gold); }}
-		.goals-table thead th{{ padding:12px 14px; text-align:center; font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:rgba(255,255,255,.9); border-right:1px solid rgba(255,255,255,.12); white-space:nowrap; }}
-		.goals-table thead th:first-child,.goals-table thead th:nth-child(2),.goals-table thead th:nth-child(3){{ text-align:left; }}
-		.goals-table thead th:last-child{{ border-right:none; }}
-		.goals-table tbody tr:nth-child(odd) td{{ background:var(--odd-row); }}
-		.goals-table tbody tr:nth-child(even) td{{ background:var(--even-row); }}
-		.goals-table tbody tr:hover td{{ background:#fce8eb; transition:background .15s; }}
-		.goals-table tbody tr:last-child td{{ border-bottom:none; }}
-		.goals-table tbody td{{ padding:10px 14px; border-bottom:1px solid rgba(201,168,76,.15); border-right:1px solid rgba(201,168,76,.15); vertical-align:middle; }}
-		.goals-table tbody td:last-child{{ border-right:none; }}
-		.col-no{{ width:36px; text-align:center; }}
-		.col-goal{{ width:200px; white-space:normal; }}
-		.col-weight{{ width:56px; text-align:center !important; }}
-		.col-desc{{ width:180px; }}
-		.col-stars{{ width:140px; text-align:center; }}
-		.col-pill{{ width:110px; text-align:center; }}
-		.desc-cell{{ display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:13px; color:var(--label); line-height:1.45; max-width:200px; word-break:break-word; }}
-		.center-stars{{ justify-content:center; }}
+        /* ── INFO TABLE ── */
+        .info-table{{
+            width:100%; border-collapse:collapse;
+            border:1.5px solid {T['info_border']};
+            border-radius:12px; overflow:hidden; margin-bottom:4px;
+            box-shadow:0 2px 12px {T['info_shadow']};
+        }}
+        .info-table tr:nth-child(odd) td{{ background:var(--odd-row); }}
+        .info-table tr:nth-child(even) td{{ background:var(--even-row); }}
+        .info-table tr:last-child td{{ border-bottom:none; }}
+        .info-table td{{
+            padding:13px 20px; border-bottom:1px solid {T['table_cell_border']};
+            border-right:1px solid {T['table_cell_border']}; vertical-align:top; width:25%;
+        }}
+        .info-table td:last-child{{ border-right:none; }}
+        .lbl{{ font-size:12px; font-weight:700; letter-spacing:1.8px; text-transform:uppercase; color:{T['lbl_color']}; margin-bottom:4px; }}
+        .val{{ font-size:13.5px; font-weight:500; color:var(--text); }}
 
-		/* ── KRA INPUT / DROPDOWN ── */
-		.kra-input {{
-			width:100%; padding:5px 8px; border:1px solid var(--gold-border);
-			border-radius:6px; font-size:12px; font-family:'DM Sans',sans-serif;
-			background:#fff; color:var(--text); outline:none;
-			transition:border-color .15s, box-shadow .15s;
-		}}
-		.kra-input:focus {{
-			border-color:var(--gold); box-shadow:0 0 0 2px rgba(201,168,76,.18);
-		}}
-		.edit-cell {{
-			position:relative;
-			overflow:visible;
-			white-space:normal;
-		}}
+        /* ── ASSESSOR AVATAR ── */
+        .assessor-cell{{ display:flex; align-items:center; gap:10px; }}
+        .ass-avatar-sm{{
+            width:38px; height:38px; border-radius:50%; flex-shrink:0;
+            background:{T['ass_avatar_bg']};
+            display:flex; align-items:center; justify-content:center;
+            border:2px solid {T['ass_avatar_border']}; overflow:hidden;
+            box-shadow:0 0 0 2px {T['accent_dim']};
+        }}
+        .ass-avatar-sm img{{ width:100%; height:100%; object-fit:cover; border-radius:50%; }}
+        .ass-initials-sm{{ font-family:'Playfair Display',serif; font-size:14px; color:{T['accent_lt']}; }}
+        .ass-name-sm{{ font-size:13px; font-weight:600; color:var(--text); }}
+        .ass-id-sm{{ font-size:11px; color:var(--muted); margin-top:1px; }}
 
-		/* The dropdown is appended to <body> and uses position:fixed via JS */
-		.kra-dropdown {{
-			position:fixed;
-			z-index:999999;
-			background:#fff;
-			border:1.5px solid var(--gold-border);
-			border-radius:8px;
-			box-shadow:0 8px 32px rgba(0,0,0,.18), 0 2px 8px rgba(201,168,76,.15);
-			max-height:200px;
-			overflow-y:auto;
-			min-width:220px;
-			display:none;
-		}}
-		.kra-dd-item {{
-			padding:8px 12px; font-size:12px; cursor:pointer; color:var(--text);
-			border-bottom:1px solid rgba(201,168,76,.1);
-			transition:background .1s;
-		}}
-		.kra-dd-item:last-child {{ border-bottom:none; }}
-		.kra-dd-item:hover {{ background:var(--odd-row); color:var(--red); }}
-		.kra-dd-item.dd-empty {{ color:var(--muted); cursor:default; font-style:italic; }}
+        /* ── GOALS TABLE ── */
+        .table-scroll{{ overflow-x:auto; overflow-y:visible; }}
+        .goals-table{{
+            width:100%; table-layout:auto; border-collapse:collapse;
+            border:1.5px solid {T['table_border']};
+            border-radius:12px; font-size:13px;
+            box-shadow:0 2px 12px {T['info_shadow']};
+        }}
+        .goals-table thead tr{{ background:{T['table_header_grad']}; border-bottom:2px solid {T['accent_border_hex']}; }}
+        .goals-table thead th{{ padding:12px 14px; text-align:center; font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:rgba(255,255,255,.9); border-right:1px solid rgba(255,255,255,.12); white-space:nowrap; }}
+        .goals-table thead th:first-child,.goals-table thead th:nth-child(2),.goals-table thead th:nth-child(3){{ text-align:left; }}
+        .goals-table thead th:last-child{{ border-right:none; }}
+        .goals-table tbody tr:nth-child(odd) td{{ background:var(--odd-row); }}
+        .goals-table tbody tr:nth-child(even) td{{ background:var(--even-row); }}
+        .goals-table tbody tr:hover td{{ background:{T['hover_row']}; transition:background .15s; }}
+        .goals-table tbody tr:last-child td{{ border-bottom:none; }}
+        .goals-table tbody td{{ padding:10px 14px; border-bottom:1px solid {T['table_border_hex']}; border-right:1px solid {T['table_border_hex']}; vertical-align:middle; }}
+        .goals-table tbody td:last-child{{ border-right:none; }}
+        .col-no{{ width:36px; text-align:center; }}
+        .col-goal{{ width:200px; white-space:normal; }}
+        .col-weight{{ width:56px; text-align:center !important; }}
+        .col-desc{{ width:180px; }}
+        .col-stars{{ width:140px; text-align:center; }}
+        .col-pill{{ width:110px; text-align:center; }}
+        .desc-cell{{ display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:13px; color:var(--label); line-height:1.45; max-width:200px; word-break:break-word; }}
+        .center-stars{{ justify-content:center; }}
 
-		/* ── PILLS ── */
-		.score-pill{{ display:inline-block; padding:4px 12px; border-radius:20px; font-weight:700; font-size:11px; white-space:nowrap; }}
-		.score-high{{ background:rgba(45,122,79,.12); color:var(--green); border:1px solid rgba(45,122,79,.25); }}
-		.score-mid{{ background:rgba(201,168,76,.15); color:var(--gold-deep); border:1px solid rgba(201,168,76,.35); }}
-		.score-low{{ background:rgba(200,16,46,.1); color:var(--red); border:1px solid rgba(200,16,46,.2); }}
-		.score-sub{{ font-size:10px; color:var(--muted); margin-top:3px; text-align:center; }}
+        /* ── KRA INPUT / DROPDOWN ── */
+        .kra-input{{
+            width:100%; padding:5px 8px; border:1px solid {T['kra_input_border']};
+            border-radius:6px; font-size:12px; font-family:'DM Sans',sans-serif;
+            background:#fff; color:var(--text); outline:none;
+            transition:border-color .15s,box-shadow .15s;
+        }}
+        .kra-input:focus{{ border-color:{T['accent_bright']}; box-shadow:0 0 0 2px {T['kra_input_focus_shadow']}; }}
+        .edit-cell{{ position:relative; overflow:visible; white-space:normal; }}
+        .kra-dropdown{{
+            position:fixed; z-index:999999; background:#fff;
+            border:1.5px solid {T['kra_dd_border']};
+            border-radius:8px;
+            box-shadow:0 8px 32px rgba(0,0,0,.18),0 2px 8px {T['kra_dd_shadow']};
+            max-height:200px; overflow-y:auto; min-width:220px; display:none;
+        }}
+        .kra-dd-item{{ padding:8px 12px; font-size:12px; cursor:pointer; color:var(--text); border-bottom:1px solid {T['accent_dim']}; transition:background .1s; }}
+        .kra-dd-item:last-child{{ border-bottom:none; }}
+        .kra-dd-item:hover{{ background:{T['kra_dd_hover_bg']}; color:{T['kra_dd_hover_color']}; }}
+        .kra-dd-item.dd-empty{{ color:var(--muted); cursor:default; font-style:italic; }}
 
-		/* ── STARS ── */
-		.star-row{{ display:flex; gap:2px; font-size:18px; line-height:1; align-items:center; flex-wrap:nowrap; }}
-		.kra-star{{ color:#e2d0b0; transition:color .12s, transform .1s; user-select:none; }}
-		.self-stars .kra-star.checked{{ color:var(--self-blue); }}
-		.self-stars .kra-star:hover{{ color:#93c5fd; transform:scale(1.2); }}
-		.assessor-stars .kra-star.checked{{ color:var(--gold); }}
-		.assessor-stars .kra-star:hover{{ color:var(--gold-lt); transform:scale(1.2); }}
+        /* ── PILLS ── */
+        .score-pill{{ display:inline-block; padding:4px 12px; border-radius:20px; font-weight:700; font-size:11px; white-space:nowrap; }}
+        .score-high{{ background:rgba(45,122,79,.12); color:var(--green); border:1px solid rgba(45,122,79,.25); }}
+        .score-mid{{ background:{T['accent_dim']}; color:{T['accent_deep']}; border:1px solid {T['accent_border']}; }}
+        .score-low{{ background:{T['score_pill_low_bg']}; color:{T['score_pill_low_clr']}; border:1px solid {T['score_pill_low_bdr']}; }}
+        .score-sub{{ font-size:10px; color:var(--muted); margin-top:3px; text-align:center; }}
 
-		/* ── KRA CARDS ── */
-		.kra-cards-grid{{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; margin-bottom:8px; justify-items:center; }}
-		.kra-card{{
-			width:180px; border:1.5px solid var(--gold-border); border-top:3px solid var(--gold);
-			border-radius:14px; padding:16px 12px 14px;
-			background:linear-gradient(160deg,#fff 55%,#fff9ee 100%);
-			box-shadow:var(--shadow-sm);
-			display:flex; flex-direction:column; align-items:center; text-align:center; gap:4px;
-			transition:box-shadow .2s, transform .15s, border-color .15s; cursor:default;
-		}}
-		.kra-card:hover{{ box-shadow:0 6px 28px rgba(201,168,76,.28),var(--shadow-md); transform:translateY(-3px); border-color:var(--gold-bright); }}
-		.kra-card-icon{{ font-size:28px; line-height:1; margin-bottom:2px; }}
-		.kra-card-title{{ font-size:12px; font-weight:700; color:var(--text); line-height:1.3; text-transform:uppercase; min-height:28px; display:flex; align-items:center; justify-content:center; }}
-		.kra-card-score-wrap{{ margin-top:6px; width:100%; text-align:center; }}
-		.kra-row-label{{ font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--label); margin-top:4px; }}
-		.kra-tooltip-panel{{
-			margin-top:10px;
-			background:linear-gradient(135deg,var(--red-dark),#2a1010);
-			color:#f0e0c0; font-size:13px; line-height:1.7;
-			padding:13px 18px; border-radius:10px;
-			box-shadow:0 8px 28px rgba(0,0,0,.25);
-			border:1px solid rgba(201,168,76,.35); transition:opacity .15s;
-		}}
-		.kra-tooltip-panel strong{{ color:var(--gold-lt); font-size:11px; letter-spacing:1px; text-transform:uppercase; display:block; margin-bottom:4px; }}
+        /* ── STARS ── */
+        .star-row{{ display:flex; gap:2px; font-size:18px; line-height:1; align-items:center; flex-wrap:nowrap; }}
+        .kra-star{{ color:#e2d0b0; transition:color .12s,transform .1s; user-select:none; }}
+        .self-stars .kra-star.checked{{ color:var(--self-blue); }}
+        .self-stars .kra-star:hover{{ color:#93c5fd; transform:scale(1.2); }}
+        .assessor-stars .kra-star.checked{{ color:{T['accent']}; }}
+        .assessor-stars .kra-star:hover{{ color:{T['accent_lt']}; transform:scale(1.2); }}
 
-		/* ── SCORE CARDS ── */
-		.score-cards{{ display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:4px; }}
-		.score-cards-single{{ grid-template-columns:1fr; max-width:320px; }}
-		.score-card{{
-			border:1.5px solid var(--gold-border); border-radius:14px;
-			padding:24px 20px; text-align:center;
-			background:linear-gradient(160deg,#fff 50%,#fff9ee 100%);
-			box-shadow:var(--shadow-gold),var(--shadow-sm); position:relative; overflow:hidden;
-		}}
-		.score-card::before{{
-			content:''; position:absolute; top:0; left:0; right:0; height:4px;
-			background:linear-gradient(90deg,var(--red-dark),var(--red),var(--gold),var(--gold-lt),var(--gold),var(--red-dark));
-			background-size:200% 100%; animation:shimmer-bar 3s linear infinite;
-		}}
-		@keyframes shimmer-bar{{ 0%{{ background-position:200% center; }} 100%{{ background-position:-200% center; }} }}
-		.sc-label{{ font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--red); margin-bottom:10px; }}
-		.sc-val{{ font-family:'Playfair Display',serif; font-size:32px; color:var(--text); }}
-		.sc-sub{{ font-size:11px; color:var(--muted); margin-top:6px; }}
+        /* ── KRA CARDS ── */
+        .kra-cards-grid{{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; margin-bottom:8px; justify-items:center; }}
+        .kra-card{{
+            width:180px; border:1.5px solid {T['kra_card_border']}; border-top:3px solid {T['kra_card_top']};
+            border-radius:14px; padding:16px 12px 14px;
+            background:{T['kra_card_bg']};
+            box-shadow:var(--shadow-sm);
+            display:flex; flex-direction:column; align-items:center; text-align:center; gap:4px;
+            transition:box-shadow .2s,transform .15s,border-color .15s; cursor:default;
+        }}
+        .kra-card:hover{{ box-shadow:0 6px 28px {T['kra_card_hover_shadow']},var(--shadow-md); transform:translateY(-3px); border-color:{T['accent_bright']}; }}
+        .kra-card-icon{{ font-size:28px; line-height:1; margin-bottom:2px; }}
+        .kra-card-title{{ font-size:12px; font-weight:700; color:var(--text); line-height:1.3; text-transform:uppercase; min-height:28px; display:flex; align-items:center; justify-content:center; }}
+        .kra-card-score-wrap{{ margin-top:6px; width:100%; text-align:center; }}
+        .kra-row-label{{ font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--label); margin-top:4px; }}
+        .kra-tooltip-panel{{
+            margin-top:10px; background:{T['kra_tooltip_bg']};
+            color:{T['kra_tooltip_color']}; font-size:13px; line-height:1.7;
+            padding:13px 18px; border-radius:10px;
+            box-shadow:0 8px 28px rgba(0,0,0,.25);
+            border:1px solid {T['kra_tooltip_border']}; transition:opacity .15s;
+        }}
+        .kra-tooltip-panel strong{{ color:{T['kra_tooltip_strong']}; font-size:11px; letter-spacing:1px; text-transform:uppercase; display:block; margin-bottom:4px; }}
 
-		/* ── PERFORMANCE GRID ── */
-		.pg-wrap{{ border-radius:16px; overflow:hidden; border:1.5px solid var(--gold-border); box-shadow:0 4px 32px rgba(206,20,38,.10),var(--shadow-gold); margin-bottom:4px; }}
-		.pg-table{{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; }}
-		.pg-main-title{{
-			background:linear-gradient(135deg,var(--red-dark) 0%,var(--red) 60%,#e8253c 100%);
-			color:#fff; font-family:'Playfair Display',serif; font-size:14px; font-weight:700;
-			letter-spacing:3px; text-transform:uppercase; text-align:center; padding:16px 20px;
-			border-bottom:2px solid var(--gold);
-		}}
-		.pg-col-head{{ padding:18px 10px 14px; text-align:center; vertical-align:middle; width:20%; transition:background .15s; }}
-		.pg-col-head:last-child{{ border-right:none !important; }}
-		.pg-num-badge{{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:8px; color:#fff; font-family:'DM Sans',sans-serif; font-size:13px; font-weight:700; margin-bottom:7px; }}
-		.pg-col-label{{ display:block; font-size:12px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; margin-top:3px; }}
-		.pg-desc-cell{{ vertical-align:top; padding:0; width:20%; }}
-		.pg-desc-cell:last-child{{ border-right:none !important; }}
-		.pg-desc-text{{ padding:14px 14px 18px; font-size:12px; line-height:1.7; }}
-		.pg-oe-bar{{ display:flex; align-items:center; background:linear-gradient(135deg,var(--red-dark) 0%,var(--red) 55%,#9a1a00 100%); border-top:2px solid var(--gold); }}
-		.pg-oe-label{{ flex:1; padding:14px 22px; font-family:'Playfair Display',serif; font-size:13px; font-weight:700; letter-spacing:2.5px; text-transform:uppercase; color:var(--gold-lt); }}
-		.pg-oe-val{{ padding:14px 22px; font-family:'Playfair Display',serif; font-size:28px; font-weight:700; color:var(--gold-lt); border-left:1px solid rgba(201,168,76,.3); background:rgba(201,168,76,.1); line-height:1; }}
+        /* ── SCORE CARDS ── */
+        .score-cards{{ display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:4px; }}
+        .score-cards-single{{ grid-template-columns:1fr; max-width:320px; }}
+        .score-card{{
+            border:1.5px solid {T['score_card_border']}; border-radius:14px;
+            padding:24px 20px; text-align:center;
+            background:{T['score_card_bg']};
+            box-shadow:{T['score_card_shadow']},var(--shadow-sm);
+            position:relative; overflow:hidden;
+        }}
+        .score-card::before{{
+            content:''; position:absolute; top:0; left:0; right:0; height:4px;
+            background:{T['score_card_top']};
+            background-size:200% 100%; animation:shimmer-bar 3s linear infinite;
+        }}
+        @keyframes shimmer-bar{{ 0%{{ background-position:200% center; }} 100%{{ background-position:-200% center; }} }}
+        .sc-label{{ font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:{T['sc_label_color']}; margin-bottom:10px; }}
+        .sc-val{{ font-family:'Playfair Display',serif; font-size:32px; color:var(--text); }}
+        .sc-sub{{ font-size:11px; color:var(--muted); margin-top:6px; }}
 
-		.worker-criteria{{ margin-top:20px; border:1.5px solid var(--gold-border); border-radius:12px; padding:18px; background:linear-gradient(135deg,#fff9f0,#fff3e0); }}
-		.wc-title{{ font-weight:700; font-size:13px; letter-spacing:1.5px; text-transform:uppercase; color:var(--red); margin-bottom:14px; }}
-		.wc-grid{{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }}
-		.wc-card{{ background:#fff; border:1px solid var(--gold-border); border-radius:10px; padding:12px 14px; box-shadow:var(--shadow-sm); }}
-		.wc-card-title{{ font-size:12px; font-weight:700; margin-bottom:8px; color:var(--red); }}
-		.wc-row{{ display:flex; justify-content:space-between; font-size:11.5px; padding:4px 0; border-bottom:1px dashed #e5c880; }}
-		.wc-row:last-child{{ border-bottom:none; }}
+        /* ── PERFORMANCE GRID ── */
+        .pg-wrap{{ border-radius:16px; overflow:hidden; border:1.5px solid {T['pg_wrap_border']}; box-shadow:{T['pg_wrap_shadow']}; margin-bottom:4px; }}
+        .pg-table{{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; }}
+        .pg-main-title{{
+            background:{T['pg_title_grad']};
+            color:#fff; font-family:'Playfair Display',serif; font-size:14px; font-weight:700;
+            letter-spacing:3px; text-transform:uppercase; text-align:center; padding:16px 20px;
+            border-bottom:2px solid {T['pg_title_border']};
+        }}
+        .pg-col-head{{ padding:18px 10px 14px; text-align:center; vertical-align:middle; width:20%; transition:background .15s; }}
+        .pg-col-head:last-child{{ border-right:none !important; }}
+        .pg-num-badge{{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:8px; color:#fff; font-family:'DM Sans',sans-serif; font-size:13px; font-weight:700; margin-bottom:7px; }}
+        .pg-col-label{{ display:block; font-size:12px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; margin-top:3px; }}
+        .pg-desc-cell{{ vertical-align:top; padding:0; width:20%; }}
+        .pg-desc-cell:last-child{{ border-right:none !important; }}
+        .pg-desc-text{{ padding:14px 14px 18px; font-size:12px; line-height:1.7; }}
+        .pg-oe-bar{{
+            display:flex; align-items:center;
+            background:{T['pg_oe_bar']};
+            border-top:2px solid {T['pg_oe_border']};
+        }}
+        .pg-oe-label{{ flex:1; padding:14px 22px; font-family:'Playfair Display',serif; font-size:13px; font-weight:700; letter-spacing:2.5px; text-transform:uppercase; color:{T['pg_oe_color']}; }}
+        .pg-oe-val{{ padding:14px 22px; font-family:'Playfair Display',serif; font-size:28px; font-weight:700; color:{T['pg_oe_val_color']}; border-left:1px solid {T['pg_oe_val_border']}; background:{T['pg_oe_val_bg']}; line-height:1; }}
 
-		.footer{{ border-top:2px solid var(--gold-border); padding:16px 48px; display:flex; justify-content:space-between; align-items:center; background:linear-gradient(90deg,#fff9f0,#fff6e8,#fff9f0); }}
-		.footer-left{{ font-size:11px; color:var(--label); }}
-		.footer-right{{ font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--gold-deep); background:linear-gradient(135deg,var(--gold-pale),#fff8d0); border:1px solid var(--gold-border); padding:4px 14px; border-radius:20px; box-shadow:0 1px 6px rgba(201,168,76,.2); }}
+        /* ── WORKER CRITERIA ── */
+        .worker-criteria{{ margin-top:20px; border:1.5px solid {T['wc_border']}; border-radius:12px; padding:18px; background:{T['wc_bg']}; }}
+        .wc-title{{ font-weight:700; font-size:13px; letter-spacing:1.5px; text-transform:uppercase; color:{T['wc_title_color']}; margin-bottom:14px; }}
+        .wc-grid{{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }}
+        .wc-card{{ background:#fff; border:1px solid {T['wc_card_border']}; border-radius:10px; padding:12px 14px; box-shadow:var(--shadow-sm); }}
+        .wc-card-title{{ font-size:12px; font-weight:700; margin-bottom:8px; color:{T['wc_card_title']}; }}
+        .wc-row{{ display:flex; justify-content:space-between; font-size:11.5px; padding:4px 0; border-bottom:1px dashed {T['wc_row_dash']}; }}
+        .wc-row:last-child{{ border-bottom:none; }}
+        .mc-wrap{{
+    background:rgba(201,168,76,0.06);
+    border:1px solid rgba(201,168,76,0.28);
+    border-radius:10px;
+    padding:10px 12px;
+    margin-top:8px;
+}}
 
-		@media(max-width:768px){{
-			.header,.body,.footer{{ padding-left:22px; padding-right:22px; }}
-			.header-inner{{ flex-direction:column; align-items:center; text-align:center; }}
-			.doc-meta{{ position:static; text-align:center; margin-bottom:16px; }}
-			.badges{{ justify-content:center; }}
-			.score-cards{{ grid-template-columns:1fr; }}
-			.info-table td{{ width:50%; }}
-			.info-table tr{{ display:flex; flex-wrap:wrap; }}
-			.kra-cards-grid{{ grid-template-columns:repeat(2,1fr); }}
-			.col-desc{{ width:150px; }}
-		}}
-	</style>
+.mc-row{{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    margin-bottom:8px;
+}}
+
+.mc-row:last-child{{
+    margin-bottom:0;
+}}
+
+.mc-lbl{{
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:.7px;
+    text-transform:uppercase;
+    color:#8B6508;
+    flex-shrink:0;
+}}
+
+/* FIXED CLEAN INPUT */
+.mc-inp{{
+    width:100%;
+    max-width:120px;
+    padding:2px 6px;
+    border:1px solid rgba(201,168,76,0.45);
+    border-radius:10px;
+    font-size:14px;
+    font-weight:600;
+    font-family:'DM Sans',sans-serif;
+    background:#ffffff;
+    color:#1a1a2e;
+    outline:none;
+    box-sizing:border-box;
+
+    appearance:textfield;
+    -moz-appearance:textfield;
+}}
+
+.mc-inp::-webkit-outer-spin-button,
+.mc-inp::-webkit-inner-spin-button{{
+    -webkit-appearance:none;
+    margin:0;
+}}
+
+.mc-inp:focus{{
+    border-color:#D4A017;
+    box-shadow:0 0 0 3px rgba(201,168,76,0.18);
+}}
+
+.mc-inp[readonly]{{
+    background:#f8f8f8;
+    color:#777;
+    cursor:not-allowed;
+}}
+
+.mc-pct-row{{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding-top:8px;
+    border-top:1px dashed rgba(201,168,76,0.25);
+    margin-top:6px;
+}}
+
+.mc-pct-lbl{{
+    font-size:11px;
+    font-weight:700;
+    color:#8B6508;
+}}
+
+.mc-pct-val{{
+    font-size:14px;
+    font-weight:800;
+    color:#0f1f3d;
+}}
+
+.mc-rating-lbl{{
+    font-size:11px;
+    font-weight:600;
+    color:#8B6508;
+    letter-spacing:.3px;
+    margin-top:5px;
+}}
+        /* ── FOOTER ── */
+        .footer{{ border-top:2px solid {T['accent_border']}; padding:16px 48px; display:flex; justify-content:space-between; align-items:center; background:{T['footer_bg']}; }}
+        .footer-left{{ font-size:11px; color:var(--label); }}
+        .footer-right{{ font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:{T['footer_right_clr']}; background:{T['footer_right_bg']}; border:1px solid {T['footer_right_bdr']}; padding:4px 14px; border-radius:20px; box-shadow:0 1px 6px {T['footer_right_shadow']}; }}
+
+        @media(max-width:768px){{
+            .header,.body,.footer{{ padding-left:22px; padding-right:22px; }}
+            .header-inner{{ flex-direction:column; align-items:center; text-align:center; }}
+            .doc-meta{{ position:static; text-align:center; margin-bottom:16px; }}
+            .badges{{ justify-content:center; }}
+            .score-cards{{ grid-template-columns:1fr; }}
+            .info-table td{{ width:50%; }}
+            .info-table tr{{ display:flex; flex-wrap:wrap; }}
+            .kra-cards-grid{{ grid-template-columns:repeat(2,1fr); }}
+            .col-desc{{ width:150px; }}
+        }}
+    </style>
 </head>
 <body>
 <div class="gold-frame">
 <div class="form">
 
-	<div class="header">
-		<div class="header-ring"></div>
-		<div class="doc-meta">
-			<div class="doc-no">📄 {safe(doc.name)}</div>
-			<div class="doc-status {status_class}">● {status_label}</div>
-			<div class="logo-html">{logo_image_html}</div>
-		</div>
-		<div class="header-inner">
-			<div class="emp-avatar">{image_html}</div>
-			<div class="header-info">
-				<div class="emp-name">{safe(doc.employee_name)}</div>
-				<div class="emp-sub">{safe(doc.get("designation") or "")} {"&nbsp;·&nbsp; " + frappe.db.get_value("Employee",doc.get("employee"),"custom_division") or ""}</div>
-				<div class="badges">{badges}</div>
-			</div>
-		</div>
-	</div>
-	<div class="stripe"></div>
+    <div class="header">
+        <div class="doc-meta">
+            <div class="doc-no">📄 {safe(doc.name)}</div>
+            <div class="doc-status {status_class}">● {status_label}</div>
+            <div class="logo-html">{logo_image_html}</div>
+        </div>
+        <div class="header-inner">
+            <div class="emp-avatar">{image_html}</div>
+            <div class="header-info">
+                <div class="emp-name">{safe(doc.employee_name)}</div>
+                <div class="emp-sub">{safe(doc.get("designation") or "")} {"&nbsp;·&nbsp; " + (frappe.db.get_value("Employee", doc.get("employee"), "custom_division") or "")}</div>
+                <div class="badges">{badges}</div>
+            </div>
+        </div>
+    </div>
+    <div class="stripe"></div>
 
-	<div class="body">
+    <div class="body">
 
-		<div class="collapsible-section">
-			<div class="section collapsible-header" onclick="toggleSection(this)">
-				<span style='font-size:15px;'>Employee Details</span><span class="coll-icon">▼</span>
-			</div>
-			<div class="collapsible-body">
-				<table class="info-table">
-					<tr>
-						<td><div class="lbl">GEC No</div><div class="val">{safe(doc.custom_gec_no) or ""}</div></td>
-						<td><div class="lbl">Employee Name</div><div class="val">{safe(doc.employee_name)}</div></td>
-						<td><div class="lbl">Company</div><div class="val">{safe(doc.company)}</div></td>
-						<td><div class="lbl">Grade</div><div class="val">{safe(doc.get("custom_grade") or "")}</div></td>
-					</tr>
-					<tr>
-						<td><div class="lbl">Department</div><div class="val">{frappe.db.get_value("Employee",doc.get("employee"),"custom_division") or safe(doc.get("department") or "")}</div></td>
-						<td><div class="lbl">Designation</div><div class="val">{safe(doc.get("designation") or "")}</div></td>
-						<td><div class="lbl">Unit</div><div class="val">{safe(doc.get("custom_unit") or "")}</div></td>
-						<td><div class="lbl">Assessment Date</div><div class="val">{formatdate(doc.get("creation") or "")}</div></td>
-					</tr>
-					<tr>
-						<td><div class="lbl">Date of Joining</div><div class="val">{doj}</div></td>
-						<td><div class="lbl">Qualification</div><div class="val">{safe(doc.get("custom_qualification") or "")}</div></td>
-						<td><div class="lbl">Certifications</div><div class="val">{safe(doc.get("custom_certifications") or "")}</div></td>
-						<td><div class="lbl">Experience</div><div class="val">{exp_str}</div></td>
-					</tr>
-					<tr>
-						<td>
-							<div class="lbl">📅 Appraisal Cycle</div>
-							<div class="val">{safe(doc.get("appraisal_cycle") or "—")}</div>
-						</td>
-						<td>
-							<div class="lbl">🗓️ Period</div>
-							<div class="val">{start_date or "—"} &nbsp;→&nbsp; {end_date or "—"}</div>
-						</td>
-						<td>
-							<div class="lbl">🏅 Total Score</div>
-							<div class="val" style="font-family:'Playfair Display',serif;font-size:20px;color:var(--gold-deep);" id="hdr-total-score">{total_goal_score_str or "—"}</div>
-						</td>
-						<td>
-							<div class="lbl">👤 Assessor</div>
-							<div class="assessor-cell">
-								<div class="ass-avatar-sm">
-									{'<img src="' + assessor_image + '" alt="' + safe(reviewer_name) + '">' if assessor_image else '<div class="ass-initials-sm">' + (initials(reviewer_name) if reviewer_name else "?") + '</div>'}
-								</div>
-								<div>
-									<div class="ass-name-sm">{safe(reviewer_name) or "—"}</div>
-									<div class="ass-id-sm">{safe(reviewer_id)}</div>
-								</div>
-							</div>
-						</td>
-					</tr>
-				</table>
-			</div>
-		</div>
+        <div class="collapsible-section">
+            <div class="section collapsible-header" onclick="toggleSection(this)">
+                <span style='font-size:15px;'>Employee Details</span><span class="coll-icon">▼</span>
+            </div>
+            <div class="collapsible-body">
+                <table class="info-table">
+                    <tr>
+                        <td><div class="lbl">GEC No</div><div class="val">{safe(doc.custom_gec_no) or ""}</div></td>
+                        <td><div class="lbl">Employee Name</div><div class="val">{safe(doc.employee_name)}</div></td>
+                        <td><div class="lbl">Company</div><div class="val">{safe(doc.company)}</div></td>
+                        <td><div class="lbl">Assessment Date</div><div class="val">{formatdate(doc.get("creation") or "")}</div></td>
 
-		<div class="collapsible-section">
-			<div class="section collapsible-header" onclick="toggleSection(this)">
-				<span>Performance Grid</span><span class="coll-icon">▼</span>
-			</div>
-			<div class="collapsible-body">
-				{perf_grid_html}
-			</div>
-		</div>
+                    </tr>
+                    <tr>
+                        <td><div class="lbl">Unit</div><div class="val">{safe(doc.get("custom_unit") or "")}</div></td>
+                        <td><div class="lbl">Project</div><div class="val">{frappe.db.get_value("Employee", doc.get("employee"), "custom_job_description") or "-"}</div></td>
+                        <td><div class="lbl">Designation</div><div class="val">{safe(doc.get("designation") or "")}</div></td>
+                        <td><div class="lbl">Grade</div><div class="val">{safe(doc.get("custom_grade") or "")}</div></td>
 
-		{kra_cards_html}
-		{goals_section}
+                    </tr>
+                    <tr>
+                        <td><div class="lbl">Date of Joining</div><div class="val">{doj}</div></td>
+                        <td><div class="lbl">Qualification</div><div class="val">{safe(doc.get("custom_qualification") or "-")}</div></td>
+                        <td><div class="lbl">Certifications</div><div class="val">{safe(doc.get("custom_certifications") or "-")}</div></td>
+                        <td><div class="lbl">Experience</div><div class="val">{exp_str}</div></td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="lbl">📅 Appraisal Cycle</div>
+                            <div class="val">{safe(doc.get("appraisal_cycle") or "—")}</div>
+                        </td>
+                        <td>
+                            <div class="lbl">🗓️ Period</div>
+                            <div class="val">{start_date or "—"} &nbsp;→&nbsp; {end_date or "—"}</div>
+                        </td>
+                        <td>
+                            <div class="lbl">🏅 Total Score</div>
+                            <div class="val" style="font-family:'Playfair Display',serif;font-size:20px;color:{T['accent_deep']};" id="hdr-total-score">{total_goal_score_str or "-" if (is_published or is_assessor or is_admin) else "—"}</div>
+                        </td>
+                        <td>
+                            <div class="lbl">👤 Assessor</div>
+                            <div class="assessor-cell">
+                                <div class="ass-avatar-sm">
+                                    {'<img src="' + assessor_image + '" alt="' + safe(reviewer_name) + '">' if assessor_image else '<div class="ass-initials-sm">' + (initials(reviewer_name) if reviewer_name else "?") + '</div>'}
+                                </div>
+                                <div>
+                                    <div class="ass-name-sm">{safe(reviewer_name) or "—"}</div>
+                                    <div class="ass-id-sm">{safe(reviewer_id)}</div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {manual_lock}
+                    {previous_rating_html}
+                </table>
+            </div>
+        </div>
 
-		<div class="collapsible-section">
-			<div class="section collapsible-header" onclick="toggleSection(this)">
-				<span style='font-size:15px;'>Score Summary</span><span class="coll-icon">▼</span>
-			</div>
-			<div class="collapsible-body">
-				{score_cards_html}
-			</div>
-		</div>
+        <div class="collapsible-section">
+            <div class="section collapsible-header" onclick="toggleSection(this)">
+                <span style='font-size:15px;'>Performance Grid</span><span class="coll-icon">▼</span>
+            </div>
+            <div class="collapsible-body">
+                {perf_grid_html}
+            </div>
+        </div>
 
-	</div>
+        {kra_cards_html}
+        {goals_section}
 
-	<div class="footer">
-		<div class="footer-left">If anyone scores 1&amp;2 in Safety it will not be considered as 4 &amp; 5 in Overall Effectiveness rating.</div>
-		<div class="footer-right">Note</div>
-	</div>
+        <div class="collapsible-section">
+            <div class="section collapsible-header" onclick="toggleSection(this)">
+                <span style='font-size:15px;'>Score Summary</span><span class="coll-icon">▼</span>
+            </div>
+            <div class="collapsible-body">
+                {score_cards_html}
+            </div>
+        </div>
+
+    </div>
+
+    <div class="footer">
+        <div class="footer-left">If anyone scores 1&amp;2 in Safety it will not be considered as 4 &amp; 5 in Overall Effectiveness rating.</div>
+        <div class="footer-right">Note</div>
+    </div>
 
 </div>
 </div>
 
-<!-- ── Single shared dropdown portal (appended to body, avoids all overflow clipping) ── -->
+<!-- ── Single shared dropdown portal ── -->
 <div class="kra-dropdown" id="kra-dd-portal"></div>
 
 <script>
@@ -1258,971 +1815,750 @@ var SELF_EDITABLE  = {"true" if self_editable else "false"};
 var ASSR_EDITABLE  = {"true" if assessor_editable else "false"};
 var IS_WORKER      = {"true" if is_worker else "false"};
 var KRA_LIST       = {kra_options_json};
+var KRA_ARABIC_MAP = {kra_arabic_map_json};
 
-/* ── Active dropdown state ── */
-var _activeTblIdx  = null;
-var _activeInput   = null;
-var _portal        = document.getElementById('kra-dd-portal');
+var _activeTblIdx = null;
+var _activeInput  = null;
+var _portal       = document.getElementById('kra-dd-portal');
 
 /* ── Collapsible ── */
 function toggleSection(headerEl) {{
-	var icon = headerEl.querySelector('.coll-icon');
-	var body = headerEl.closest('.collapsible-section').querySelector('.collapsible-body');
-	if (!body) return;
-	var isCollapsed = body.classList.contains('collapsed');
-	body.classList.toggle('collapsed', !isCollapsed);
-	if (icon) icon.classList.toggle('rotated', !isCollapsed);
+    var icon = headerEl.querySelector('.coll-icon');
+    var body = headerEl.closest('.collapsible-section').querySelector('.collapsible-body');
+    if (!body) return;
+    var isCollapsed = body.classList.contains('collapsed');
+    body.classList.toggle('collapsed', !isCollapsed);
+    if (icon) icon.classList.toggle('rotated', !isCollapsed);
 }}
 
 /* ── KRA Tooltip ── */
 function showKraTooltip(cardEl) {{
-	var desc = cardEl.getAttribute('data-desc') || '';
-	if (!desc) return;
-	var title = cardEl.querySelector('.kra-card-title');
-	var label = title ? title.textContent.trim() : '';
-	var panel = document.getElementById('kra-tooltip-panel');
-	if (!panel) return;
-	panel.innerHTML = '<strong>' + label + '</strong>' + desc;
-	panel.style.display = 'block';
+    var desc = cardEl.getAttribute('data-desc') || '';
+    if (!desc) return;
+    var title = cardEl.querySelector('.kra-card-title');
+    var label = title ? title.textContent.trim() : '';
+    var panel = document.getElementById('kra-tooltip-panel');
+    if (!panel) return;
+    panel.innerHTML = '<strong>' + label + '</strong>' + desc;
+    panel.style.display = 'block';
 }}
 function hideKraTooltip() {{
-	var panel = document.getElementById('kra-tooltip-panel');
-	if (panel) panel.style.display = 'none';
+    var panel = document.getElementById('kra-tooltip-panel');
+    if (panel) panel.style.display = 'none';
 }}
 
-/* ── Position portal under the focused input ── */
+/* ── Portal positioning ── */
 function positionPortal(input) {{
-	var rect = input.getBoundingClientRect();
-	_portal.style.top    = (rect.bottom + 2) + 'px';
-	_portal.style.left   = rect.left + 'px';
-	_portal.style.width  = Math.max(rect.width, 240) + 'px';
+    var rect = input.getBoundingClientRect();
+    _portal.style.top   = (rect.bottom + 2) + 'px';
+    _portal.style.left  = rect.left + 'px';
+    _portal.style.width = Math.max(rect.width, 240) + 'px';
 }}
 
-/* ── Show dropdown ── */
 function showKraDropdown(input) {{
-	_activeInput  = input;
-	_activeTblIdx = parseInt(input.dataset.tbl);
-	positionPortal(input);
-	buildDropdownItems(input.value || '');
-	_portal.style.display = 'block';
+    _activeInput  = input;
+    _activeTblIdx = parseInt(input.dataset.tbl);
+    positionPortal(input);
+    buildDropdownItems(input.value || '');
+    _portal.style.display = 'block';
 }}
 
-/* ── Filter as user types ── */
 function filterKraDropdown(input) {{
-	if (_activeTblIdx !== parseInt(input.dataset.tbl)) {{
-		showKraDropdown(input);
-		return;
-	}}
-	positionPortal(input);
-	buildDropdownItems(input.value || '');
-	_portal.style.display = 'block';
+    if (_activeTblIdx !== parseInt(input.dataset.tbl)) {{ showKraDropdown(input); return; }}
+    positionPortal(input);
+    buildDropdownItems(input.value || '');
+    _portal.style.display = 'block';
 }}
 
-/* ── Build list items ── */
 function buildDropdownItems(q) {{
-	q = (q || '').trim().toLowerCase();
-	var filtered = q ? KRA_LIST.filter(function(k) {{ return k.toLowerCase().indexOf(q) !== -1; }}) : KRA_LIST;
-	if (!filtered.length) {{
-		_portal.innerHTML = '<div class="kra-dd-item dd-empty">No KRA found</div>';
-	}} else {{
-		_portal.innerHTML = filtered.slice(0, 30).map(function(k) {{
-			return '<div class="kra-dd-item" onmousedown="selectKra(this)">' + k + '</div>';
-		}}).join('');
-	}}
+    q = (q || '').trim().toLowerCase();
+    var filtered = q ? KRA_LIST.filter(function(k) {{ return k.toLowerCase().indexOf(q) !== -1; }}) : KRA_LIST;
+    if (!filtered.length) {{
+        _portal.innerHTML = '<div class="kra-dd-item dd-empty">No KRA found</div>';
+    }} else {{
+        _portal.innerHTML = filtered.slice(0, 30).map(function(k) {{
+            /* Store English name in data-english, display translated if Arabic mode */
+            var isArabic = false;
+            try {{
+                isArabic = window.parent && 
+                           window.parent.cur_frm && 
+                           window.parent.cur_frm.doc.custom_language === 'Arabic';
+            }} catch(e) {{}}
+
+            var displayText = k;
+            if (isArabic && typeof KRA_ARABIC_MAP !== 'undefined' && KRA_ARABIC_MAP[k]) {{
+                displayText = KRA_ARABIC_MAP[k];
+            }}
+
+            return '<div class="kra-dd-item" data-english="' + k.replace(/"/g, '&quot;') + '" onmousedown="selectKra(this)">' + displayText + '</div>';
+        }}).join('');
+    }}
 }}
 
-/* ── Hide dropdown with delay (allows mousedown on item to fire first) ── */
 function hideKraDropdownDelayed(input) {{
-	setTimeout(function() {{
-		if (_activeInput === input) {{
-			_portal.style.display = 'none';
-			_activeTblIdx = null;
-			_activeInput  = null;
-		}}
-	}}, 200);
+    setTimeout(function() {{
+        if (_activeInput === input) {{
+            _portal.style.display = 'none';
+            _activeTblIdx = null;
+            _activeInput  = null;
+        }}
+    }}, 200);
 }}
 
-/* ── Close on outside click ── */
 document.addEventListener('mousedown', function(e) {{
-	if (!_portal.contains(e.target) && e.target !== _activeInput) {{
-		_portal.style.display = 'none';
-		_activeTblIdx = null;
-		_activeInput  = null;
-	}}
+    if (!_portal.contains(e.target) && e.target !== _activeInput) {{
+        _portal.style.display = 'none';
+        _activeTblIdx = null;
+        _activeInput  = null;
+    }}
 }});
-
-/* ── Close on scroll / resize (reposition or hide) ── */
 window.addEventListener('scroll', function() {{
-	if (_activeInput && _portal.style.display === 'block') {{
-		positionPortal(_activeInput);
-	}}
+    if (_activeInput && _portal.style.display === 'block') positionPortal(_activeInput);
 }}, true);
 window.addEventListener('resize', function() {{
-	if (_activeInput && _portal.style.display === 'block') {{
-		positionPortal(_activeInput);
-	}}
+    if (_activeInput && _portal.style.display === 'block') positionPortal(_activeInput);
 }});
 
-/* ── SELECT KRA ── */
 function selectKra(item) {{
-	var tblIdx  = _activeTblIdx;
-	var kraName = item.textContent.trim();
+    var kraName = item.getAttribute('data-english') || item.textContent.trim();
+    var kraDisplay = item.textContent.trim();  /* Arabic display text if translated, else same as kraName */
+    var tblIdx  = _activeTblIdx;
 
-	/* Close portal */
-	_portal.style.display = 'none';
-	_activeTblIdx = null;
+    _portal.style.display = 'none';
+    _activeTblIdx = null;
 
-	/* Update input display */
-	var input = document.querySelector('.kra-input[data-tbl="' + tblIdx + '"]');
-	if (input) {{ input.value = kraName; _activeInput = null; }}
+    var input = document.querySelector('.kra-input[data-tbl="' + tblIdx + '"]');
+    if (input) {{
+        input.setAttribute('data-kra-english', kraName);  /* Always store English for saving */
+        
+        /* Check if Arabic mode is active on parent form */
+        var isArabic = false;
+        try {{
+            isArabic = window.parent && 
+                       window.parent.cur_frm && 
+                       window.parent.cur_frm.doc.custom_language === 'Arabic';
+        }} catch(e) {{}}
+        
+        /* Show Arabic display text if in Arabic mode, else show English */
+        input.value = isArabic ? kraDisplay : kraName;
+        _activeInput = null;
+    }}
 
-	/* Update ROW_MAP cache */
-	if (ROW_MAP[tblIdx]) ROW_MAP[tblIdx].kra = kraName;
+    if (ROW_MAP[tblIdx]) ROW_MAP[tblIdx].kra = kraName;
 
-	var info = ROW_MAP[tblIdx];
-	if (!info) return;
+    var info = ROW_MAP[tblIdx];
+    if (!info) return;
 
-	/* Update Frappe model */
-	var frm = getLiveForm();
-	if (frm) {{
-		frappe.model.set_value(info.cdt, info.name, "kra", kraName).then(function() {{
-			frm.dirty();
-			showSaveStatus();
-		}});
-		frappe.model.set_value("Appraisal Goal", info.name, "custom_is_new_goal", 1).then(function() {{
-			frm.dirty();
-			showSaveStatus();
-		}});
-	}} else {{
-		frappe.model.set_value("Appraisal Goal", info.name, "kra", kraName);
-		frappe.model.set_value("Appraisal Goal", info.name, "custom_is_new_goal", 1);
-		showSaveStatus();
-	}}
+    var parentFrappe = null;
+    try {{ parentFrappe = window.parent && window.parent.frappe; }} catch(e) {{}}
+    var _frappe = parentFrappe || frappe;
 
-	/* Fetch description */
-	frappe.call({{
-		method: "pms_ai.custom.get_kra_description",
-		args: {{ kra: kraName, grade: "{grade_js}" }},
-		callback: function(r) {{
-			if (r.message && r.message.length) {{
-				var desc = r.message[0].description || "";
-				var frm2 = getLiveForm();
-				if (frm2) {{
-					frappe.model.set_value(info.cdt, info.name, "custom_description", desc)
-						.then(function() {{ frm2.dirty(); }});
-				}} else {{
-					frappe.model.set_value("Appraisal Goal", info.name, "custom_description", desc);
-				}}
-				var descEl = document.getElementById("desc-cell-" + tblIdx);
-				if (descEl) {{ descEl.textContent = desc; descEl.title = desc; }}
-			}}
-		}}
-	}});
+    var frm = getLiveForm();
+    if (frm) {{
+        /* Save English name to Frappe link field */
+        _frappe.model.set_value(info.cdt, info.name, "kra", kraName).then(function() {{ frm.dirty(); showSaveStatus(); }});
+        _frappe.model.set_value("Appraisal Goal", info.name, "custom_is_new_goal", 1).then(function() {{ frm.dirty(); }});
+    }} else {{
+        _frappe.model.set_value("Appraisal Goal", info.name, "kra", kraName);
+        _frappe.model.set_value("Appraisal Goal", info.name, "custom_is_new_goal", 1);
+        showSaveStatus();
+    }}
+
+    frappe.call({{
+        method: "pms_ai.custom.get_kra_description",
+        args: {{ kra: kraName, grade: "{grade_js}" }},
+        callback: function(r) {{
+            if (r.message && r.message.length) {{
+                var desc  = r.message[0].description || "";
+                var frm2  = getLiveForm();
+                if (frm2) {{
+                    _frappe.model.set_value(info.cdt, info.name, "custom_description", desc).then(function() {{ frm2.dirty(); }});
+                }} else {{
+                    _frappe.model.set_value("Appraisal Goal", info.name, "custom_description", desc);
+                }}
+                var descEl = document.getElementById("desc-cell-" + tblIdx);
+                if (descEl) {{ descEl.textContent = desc; descEl.title = desc; }}
+            }}
+        }}
+    }});
 }}
 
-/* ── SAVE STATUS ── */
 function showSaveStatus() {{
-	var status = document.getElementById("goals-save-status");
-	if (status) {{
-		status.style.display = 'inline';
-		setTimeout(function() {{ status.style.display = 'none'; }}, 1500);
-	}}
+    var status = document.getElementById("goals-save-status");
+    if (status) {{ status.style.display = 'inline'; setTimeout(function() {{ status.style.display = 'none'; }}, 1500); }}
 }}
 
-/* ── Helpers ── */
 function getLiveForm() {{
-	try {{
-		var frm = window.cur_frm || (window.parent && window.parent.cur_frm);
-		return (frm && frm.doc && frm.doc.name === APPRAISAL_NAME) ? frm : null;
-	}} catch(e) {{ return null; }}
+    try {{
+        var frm = window.cur_frm || (window.parent && window.parent.cur_frm);
+        return (frm && frm.doc && frm.doc.name === APPRAISAL_NAME) ? frm : null;
+    }} catch(e) {{ return null; }}
 }}
+
 function pillClass(score) {{
-	if (score >= 4.0) return "score-high";
-	if (score >= 2.5) return "score-mid";
-	return "score-low";
+    if (score >= 4.0) return "score-high";
+    if (score >= 2.5) return "score-mid";
+    return "score-low";
 }}
+
 function renderStars(containerId, val) {{
-	var el = document.getElementById(containerId);
-	if (!el) return;
-	el.querySelectorAll(".kra-star").forEach(function(s, i) {{
-		var v = i + 1;
-		s.textContent = v <= val ? "★" : "☆";
-		s.classList.toggle("checked", v <= val);
-	}});
+    var el = document.getElementById(containerId);
+    if (!el) return;
+    el.querySelectorAll(".kra-star").forEach(function(s, i) {{
+        var v = i + 1;
+        s.textContent = v <= val ? "★" : "☆";
+        s.classList.toggle("checked", v <= val);
+    }});
 }}
 
-/* ── ASSESSOR STAR SYNC ── */
 function syncAssessorUI(tblIdx, starVal) {{
-	if (!ASSR_EDITABLE) return;
-	var info = ROW_MAP[tblIdx];
-	if (!info) return;
-	var weightage  = info.weightage || 0;
-	var goalScore  = parseFloat(starVal.toFixed(2));
-	var totalscore = parseFloat((starVal * weightage / 100).toFixed(2));
-
-	renderStars("tbl-assessor-" + tblIdx, starVal);
-	var sc = document.getElementById("tbl-score-" + tblIdx);
-	if (sc) sc.textContent = starVal;
-
-	var pill = document.getElementById("tbl-pill-" + tblIdx);
-	if (pill) {{ pill.textContent = goalScore.toFixed(2) + " / 5"; pill.className = "score-pill " + pillClass(goalScore); }}
-
-	document.querySelectorAll(".kra-card").forEach(function(card) {{
-		if (parseInt(card.dataset.tbl) === tblIdx) {{
-			var cIdx = card.id.replace("kra-card-", "");
-			renderStars("card-assessor-" + cIdx, starVal);
-			var cp = document.getElementById("card-pill-" + cIdx);
-			if (cp) cp.textContent = starVal + " / 5";
-		}}
-	}});
-
-	ROW_MAP[tblIdx].assessor_stars = starVal;
-	ROW_MAP[tblIdx].goal_score     = goalScore;
-	ROW_MAP[tblIdx].weighted_score = totalscore;
-
-	var totalWeightedStars = 0, totalWeight = 0;
-	Object.values(ROW_MAP).forEach(function(r) {{
-		if ((r.assessor_stars || 0) > 0) {{
-			totalWeightedStars += (r.assessor_stars || 0) * (r.weightage || 0);
-			totalWeight        += (r.weightage || 0);
-		}}
-	}});
-	var totalOf5 = totalWeight > 0 ? parseFloat((totalWeightedStars / totalWeight).toFixed(0)) : 0;
-	["summary-total-goal","pg-oe-score","hdr-total-score"].forEach(function(id) {{
-		var el = document.getElementById(id);
-		if (el) el.textContent = totalOf5;
-	}});
-	var frm = getLiveForm();
-	if (frm) {{ frm.doc["total_score"] = totalOf5; frm.dirty(); }}
+    if (!ASSR_EDITABLE) return;
+    var info = ROW_MAP[tblIdx];
+    if (!info) return;
+    var weightage  = info.weightage || 0;
+    var goalScore  = parseFloat(starVal.toFixed(2));
+    var totalscore = parseFloat((starVal * weightage / 100).toFixed(2));
+    renderStars("tbl-assessor-" + tblIdx, starVal);
+    var sc = document.getElementById("tbl-score-" + tblIdx);
+    if (sc) sc.textContent = starVal;
+    var pill = document.getElementById("tbl-pill-" + tblIdx);
+    if (pill) {{ pill.textContent = goalScore.toFixed(2) + " / 5"; pill.className = "score-pill " + pillClass(goalScore); }}
+    document.querySelectorAll(".kra-card").forEach(function(card) {{
+        if (parseInt(card.dataset.tbl) === tblIdx) {{
+            var cIdx = card.id.replace("kra-card-", "");
+            renderStars("card-assessor-" + cIdx, starVal);
+            var cp = document.getElementById("card-pill-" + cIdx);
+            if (cp) cp.textContent = starVal + " / 5";
+        }}
+    }});
+    ROW_MAP[tblIdx].assessor_stars = starVal;
+    ROW_MAP[tblIdx].goal_score     = goalScore;
+    ROW_MAP[tblIdx].weighted_score = totalscore;
+    var totalWeightedStars = 0, totalWeight = 0;
+    Object.values(ROW_MAP).forEach(function(r) {{
+        if ((r.assessor_stars || 0) > 0) {{
+            totalWeightedStars += (r.assessor_stars || 0) * (r.weightage || 0);
+            totalWeight        += (r.weightage || 0);
+        }}
+    }});
+    var totalOf5 = totalWeight > 0 ? parseFloat((totalWeightedStars / totalWeight).toFixed(0)) : 0;
+    ["summary-total-goal","pg-oe-score","hdr-total-score"].forEach(function(id) {{
+        var el = document.getElementById(id);
+        if (el) el.textContent = totalOf5;
+    }});
+    var frm = getLiveForm();
+    if (frm) {{ frm.doc["total_score"] = totalOf5; frm.dirty(); }}
 }}
 
-/* ── SELF STAR SYNC ── */
 function syncSelfUI(tblIdx, starVal) {{
-	if (!SELF_EDITABLE || IS_WORKER) return;
-	var info = ROW_MAP[tblIdx];
-	if (!info) return;
-	renderStars("tbl-self-" + tblIdx, starVal);
-	var selfSc = document.getElementById("tbl-self-score-" + tblIdx);
-	if (selfSc) selfSc.textContent = starVal;
-	document.querySelectorAll(".kra-card").forEach(function(card) {{
-		if (parseInt(card.dataset.tbl) === tblIdx) {{
-			var cIdx = card.id.replace("kra-card-", "");
-			renderStars("card-self-" + cIdx, starVal);
-		}}
-	}});
-	ROW_MAP[tblIdx].self_stars = starVal;
-	var totalSelfWeighted = 0, totalWeight = 0;
-	Object.values(ROW_MAP).forEach(function(r) {{
-		totalSelfWeighted += (r.self_stars || 0) * (r.weightage || 0);
-		totalWeight       += (r.weightage || 0);
-	}});
-	var avgSelf = totalWeight > 0 ? parseFloat((totalSelfWeighted / totalWeight).toFixed(2)) : 0;
-	var se = document.getElementById("summary-self-score");
-	if (se) se.textContent = avgSelf.toFixed(2);
+    if (!SELF_EDITABLE || IS_WORKER) return;
+    var info = ROW_MAP[tblIdx];
+    if (!info) return;
+    renderStars("tbl-self-" + tblIdx, starVal);
+    var selfSc = document.getElementById("tbl-self-score-" + tblIdx);
+    if (selfSc) selfSc.textContent = starVal;
+    document.querySelectorAll(".kra-card").forEach(function(card) {{
+        if (parseInt(card.dataset.tbl) === tblIdx) {{
+            var cIdx = card.id.replace("kra-card-", "");
+            renderStars("card-self-" + cIdx, starVal);
+        }}
+    }});
+    ROW_MAP[tblIdx].self_stars = starVal;
+    var totalSelfWeighted = 0, totalWeight = 0;
+    Object.values(ROW_MAP).forEach(function(r) {{
+        totalSelfWeighted += (r.self_stars || 0) * (r.weightage || 0);
+        totalWeight       += (r.weightage || 0);
+    }});
+    var avgSelf = totalWeight > 0 ? parseFloat((totalSelfWeighted / totalWeight).toFixed(2)) : 0;
+    var se = document.getElementById("summary-self-score");
+    if (se) se.textContent = avgSelf.toFixed(2);
 }}
 
-/* ── STAR CLICK HANDLERS ── */
 function starClick(starEl) {{
-	if (!ASSR_EDITABLE) return;
-	var tblIdx  = parseInt(starEl.dataset.tbl);
-	var starVal = parseInt(starEl.dataset.val);
-	syncAssessorUI(tblIdx, starVal);
-	var info = ROW_MAP[tblIdx];
-	if (!info) return;
-	var frm = getLiveForm();
-	if (frm) {{
-		var rowObj = frappe.get_doc(info.cdt, info.name);
-		if (rowObj) {{
-			rowObj["custom_assessor_score"] = starVal / 5;
-			rowObj["score"] = starVal;
-		}}
-		frm.dirty();
-	}} else {{
-		frappe.model.set_value(info.cdt, info.name, "custom_assessor_score", starVal / 5);
-		frappe.model.set_value(info.cdt, info.name, "score", starVal);
-	}}
+    if (!ASSR_EDITABLE) return;
+    var tblIdx  = parseInt(starEl.dataset.tbl);
+    var starVal = parseInt(starEl.dataset.val);
+    syncAssessorUI(tblIdx, starVal);
+    var info = ROW_MAP[tblIdx];
+    if (!info) return;
+    var parentFrappe = null;
+    try {{ parentFrappe = window.parent && window.parent.frappe; }} catch(e) {{}}
+    var _frappe = parentFrappe || frappe;
+    var frm = getLiveForm();
+    if (frm) {{
+        var rowObj = _frappe.get_doc(info.cdt, info.name);
+        if (rowObj) {{ rowObj["custom_assessor_score"] = starVal / 5; rowObj["score"] = starVal; }}
+        frm.dirty();
+    }} else {{
+        _frappe.model.set_value(info.cdt, info.name, "custom_assessor_score", starVal / 5);
+        _frappe.model.set_value(info.cdt, info.name, "score", starVal);
+    }}
 }}
 
 function selfStarClick(starEl) {{
-	if (!SELF_EDITABLE || IS_WORKER) return;
-	var tblIdx  = parseInt(starEl.dataset.tbl);
-	var starVal = parseInt(starEl.dataset.val);
-	ROW_MAP[tblIdx].self_stars = starVal;
-	syncSelfUI(tblIdx, starVal);
-	var info = ROW_MAP[tblIdx];
-	if (!info) return;
-	var totalSelfWeighted = 0, totalWeight = 0;
-	Object.values(ROW_MAP).forEach(function(r) {{
-		totalSelfWeighted += (r.self_stars || 0) * (r.weightage || 0);
-		totalWeight       += (r.weightage || 0);
-	}});
-	var avgOf5    = totalWeight > 0 ? parseFloat((totalSelfWeighted / totalWeight).toFixed(2)) : 0;
-	var selfScore = parseFloat((starVal / 5).toFixed(2));
-	var frm = getLiveForm();
-	if (frm) {{
-		var rowObj = frappe.get_doc(info.cdt, info.name);
-		if (rowObj) {{
-			rowObj["custom_self_score"] = selfScore;
-			rowObj["score"] = starVal;
-		}}
-		frm.doc["custom_total_self_score"] = avgOf5;
-		var se = document.getElementById("summary-total-goal");
-		if (se) se.textContent = avgOf5.toFixed(2);
-		var oe = document.getElementById("pg-oe-score");
-		if (oe) oe.textContent = avgOf5.toFixed(2);
-		var hdr = document.getElementById("hdr-total-score");
-		if (hdr) hdr.textContent = avgOf5.toFixed(2);
-		frm.dirty();
-	}} else {{
-		frappe.model.set_value(info.cdt, info.name, "custom_self_score", selfScore);
-		frappe.model.set_value(info.cdt, info.name, "score", starVal);
-	}}
+    if (!SELF_EDITABLE || IS_WORKER) return;
+
+    var tblIdx  = parseInt(starEl.dataset.tbl);
+    var starVal = parseInt(starEl.dataset.val);
+    ROW_MAP[tblIdx].self_stars = starVal;
+    syncSelfUI(tblIdx, starVal);
+
+    var info = ROW_MAP[tblIdx];
+    if (!info) return;
+
+    var totalSelfWeighted = 0, totalWeight = 0;
+    Object.values(ROW_MAP).forEach(function(r) {{
+        totalSelfWeighted += (r.self_stars    || 0) * (r.per_weightage || 0);
+        totalWeight       += (r.per_weightage || 0);
+    }});
+
+    var avgOf5    = totalWeight > 0 ? parseFloat((totalSelfWeighted / totalWeight).toFixed(2)) : 0;
+    var selfScore = parseFloat((starVal / 5).toFixed(2));
+
+    var parentFrappe = null;
+    try {{ parentFrappe = window.parent && window.parent.frappe; }} catch(e) {{}}
+    var _frappe = parentFrappe || frappe;
+
+    var frm = getLiveForm();
+    if (frm) {{
+        var rowObj = _frappe.get_doc(info.cdt, info.name);
+        if (rowObj) {{
+            rowObj["custom_self_score"] = selfScore;
+            rowObj["custom_self_score_with_weighted"] = starVal * info.per_weightage / 100;
+        }}
+        frm.doc["custom_total_self_score"] = avgOf5;
+        ["summary-total-goal", "pg-oe-score", "hdr-total-score"].forEach(function(id) {{
+            var el = document.getElementById(id);
+            if (el) el.textContent = avgOf5.toFixed(2);
+        }});
+        frm.dirty();
+    }} else {{
+        _frappe.model.set_value(info.cdt, info.name, "custom_self_score",               selfScore);
+        _frappe.model.set_value(info.cdt, info.name, "custom_self_score_with_weighted", starVal * info.per_weightage / 100);
+        _frappe.model.set_value(info.cdt, info.name, "custom_total_self_score",         avgOf5);
+    }}
 }}
+/* ── Productivity auto-rating ─────────────────────────────────────── */
+var RATING_LABELS = {{0:"—",1:"Poor",2:"Acceptable",3:"Good",4:"Very Good",5:"Excellent"}};
+var PILL_MAP = {{1:"score-low",2:"score-low",3:"score-mid",4:"score-high",5:"score-high"}};
+
+function applyMetricRating(tblIdx, rating) {{
+    var starsEl = document.getElementById("metric-stars-" + tblIdx);
+    var labelEl = document.getElementById("metric-label-" + tblIdx);
+    var pillEl  = document.getElementById("metric-pill-"  + tblIdx);
+    var hiddenEl= document.getElementById("metric-rating-"+ tblIdx);
+
+    if (starsEl) {{
+        var stars = "";
+        for (var s = 1; s <= 5; s++) {{
+            stars += '<span class="kra-star assessor-stars' + (s <= rating ? ' checked' : '') + '">'
+                   + (s <= rating ? "★" : "☆") + "</span>";
+        }}
+        starsEl.innerHTML = stars;
+    }}
+    if (labelEl) labelEl.textContent = rating ? (rating + " — " + RATING_LABELS[rating]) : "Enter values above";
+    if (pillEl)  {{ pillEl.textContent = rating ? (rating + " / 5") : "— / 5"; pillEl.className = "score-pill " + (PILL_MAP[rating] || "score-mid"); }}
+    if (hiddenEl) hiddenEl.value = rating;
+
+    /* sync ROW_MAP + total score display */
+    if (ROW_MAP[tblIdx]) {{
+        ROW_MAP[tblIdx].assessor_stars = rating;
+        ROW_MAP[tblIdx].goal_score     = rating;
+        var wt   = ROW_MAP[tblIdx].weightage || 0;
+        var wscore = parseFloat((rating * wt / 100).toFixed(2));
+        ROW_MAP[tblIdx].weighted_score = wscore;
+    }}
+    recalcTotal();
+    document.querySelectorAll(".kra-card").forEach(function(card) {{
+        if (parseInt(card.dataset.tbl) === tblIdx) {{
+            var cIdx = card.id.replace("kra-card-", "");
+            renderStars("card-assessor-" + cIdx, rating);
+            var cp = document.getElementById("card-pill-" + cIdx);
+            if (cp) {{ cp.textContent = rating + " / 5"; cp.className = "score-pill " + (PILL_MAP[rating] || "score-mid"); }}
+            var lbl = document.getElementById("metric-label-" + tblIdx);
+            var RLABELS = {{0:"Enter values above",1:"1 — Poor",2:"2 — Acceptable",3:"3 — Good",4:"4 — Very Good",5:"5 — Excellent"}};
+            if (lbl) lbl.textContent = RLABELS[rating] || "—";
+        }}
+    }});
+}}
+
+function calcProductivity(tblIdx) {{
+    var pctInpEl = document.getElementById("metric-achieved-" + tblIdx);
+    var pctEl    = document.getElementById("metric-pct-"      + tblIdx);
+    var pct      = parseFloat(pctInpEl ? pctInpEl.value : "");
+
+    if (isNaN(pct) || pct < 0) {{
+        applyMetricRating(tblIdx, 0);
+        return;
+    }}
+
+    var rating;
+    if      (pct <  87)  rating = 1;   /* Below 87% → Poor        */
+    else if (pct <= 90)  rating = 2;   /* 87% – 90% → Acceptable  */
+    else if (pct <= 100) rating = 3;   /* 91% – 100% → Good       */
+    else if (pct <= 120) rating = 4;   /* 101% – 120% → Very Good */
+    else                 rating = 5;   /* Above 120% → Excellent  */
+    applyMetricRating(tblIdx, rating);
+    saveMetricField(tblIdx, "custom_achieved",       pct);
+    saveMetricField(tblIdx, "custom_assessor_score", rating / 5);
+}}
+
+function calcAbsences(tblIdx) {{
+    var inp  = document.getElementById("metric-days-" + tblIdx);
+    if (!inp || inp.value === "") {{ applyMetricRating(tblIdx, 0); return; }}
+    var days = parseFloat(inp.value);
+    if (isNaN(days)) {{ applyMetricRating(tblIdx, 0); return; }}
+
+    var rating = days === 0 ? 5 : days <= 2 ? 4 : days <= 4 ? 3 : days <= 6 ? 2 : 1;
+    applyMetricRating(tblIdx, rating);
+    saveMetricField(tblIdx, "custom_absence_days",   days);
+    saveMetricField(tblIdx, "custom_assessor_score", rating / 5);
+}}
+
+function saveMetricField(tblIdx, field, value) {{
+    var info = ROW_MAP[tblIdx];
+    if (!info) return;
+    var parentFrappe = null;
+    try {{ parentFrappe = window.parent && window.parent.frappe; }} catch(e) {{}}
+    var _frappe = parentFrappe || frappe;
+    var frm = getLiveForm();
+    if (frm) {{
+        _frappe.model.set_value(info.cdt, info.name, field, value);
+        frm.dirty();
+    }} else {{
+        _frappe.model.set_value("Appraisal Goal", info.name, field, value);
+    }}
+}}
+function toggleRestricted(chk) {{
+    var val = chk.checked ? 1 : 0;
+
+    var parentFrappe = null;
+    try {{ parentFrappe = window.parent && window.parent.frappe; }} catch(e) {{}}
+    var _frappe = parentFrappe || frappe;
+
+    var frm = getLiveForm();
+    if (frm) {{
+        frm.doc["custom_restricted"] = val;
+        frm.dirty();
+        /* Also refresh the field in the Frappe form UI if visible */
+        try {{ frm.refresh_field("custom_restricted"); }} catch(e) {{}}
+    }} else {{
+        _frappe.model.set_value("Appraisal", APPRAISAL_NAME, "custom_restricted", val);
+    }}
+
+    /* Visual feedback */
+    chk.style.outline = "2px solid " + (val ? "#CE1426" : "#2d7a4f");
+    setTimeout(function() {{ chk.style.outline = "none"; }}, 800);
+}}
+function recalcTotal() {{
+    var totalWeighted = 0, totalWeight = 0;
+    Object.values(ROW_MAP).forEach(function(r) {{
+        if ((r.assessor_stars || 0) > 0) {{
+            totalWeighted += (r.assessor_stars || 0) * (r.weightage || 0);
+            totalWeight   += (r.weightage || 0);
+        }}
+    }});
+    var totalOf5 = totalWeight > 0 ? parseFloat((totalWeighted / totalWeight).toFixed(2)) : 0;
+    ["summary-total-goal","pg-oe-score","hdr-total-score"].forEach(function(id) {{
+        var el = document.getElementById(id);
+        if (el) el.textContent = totalOf5;
+    }});
+    var frm = getLiveForm();
+    if (frm) {{ frm.doc["total_score"] = totalOf5; frm.dirty(); }}
+}}
+
+
 </script>
 </body>
 </html>"""
 
-	return html
-
+    return html
+    
 import frappe
 from frappe.utils.pdf import get_pdf
-
-import frappe
-from frappe.utils import flt, cstr, formatdate
-from frappe.utils.pdf import get_pdf
-
-
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-def _safe(val):
-    import html as _html
-    return _html.escape(cstr(val or ""))
-
-
-def _initials(name):
-    parts = (name or "?").split()
-    if len(parts) > 1:
-        return (parts[0][0] + parts[1][0]).upper()
-    return (parts[0][:2]).upper()
-
-
-def _pill_cls(stars):
-    if stars >= 4: return "score-high"
-    if stars >= 3: return "score-mid"
-    return "score-low"
-
-
-PILL_STYLES = {
-    "score-high": "background:rgba(45,122,79,.15);color:#2d7a4f;border:1px solid rgba(45,122,79,.3);",
-    "score-mid":  "background:rgba(201,168,76,.18);color:#8B6508;border:1px solid rgba(201,168,76,.4);",
-    "score-low":  "background:rgba(200,16,46,.12);color:#CE1426;border:1px solid rgba(200,16,46,.25);",
-}
-
-
-def _stars_html(val, kind="assessor"):
-    """Render HTML entity stars — no emoji, fully WeasyPrint-safe."""
-    color = "#c9a84c" if kind == "assessor" else "#3b82f6"
-    out = ""
-    for i in range(1, 6):
-        c = color if i <= val else "#ddd"
-        ch = "&#9733;" if i <= val else "&#9734;"
-        out += f'<span style="color:{c};font-size:15px;">{ch}</span>'
-    return out
-
-
-def _kra_badge(name):
-    """Return (letter, bg_color) — a coloured circle instead of emoji."""
-    n = (name or "").lower()
-    MAP = [
-        ("safety",        "/files/safety.png",  "#CE1426"),
-        ("integrity",     "/files/safety.png", "#b8860b"),
-        ("quality",       "/files/safety.png",  "#0369a1"),
-        ("simplicity",    "/files/safety.png", "#0891b2"),
-        ("respect",       "/files/safety.png", "#CE1426"),
-        ("continuous",    "/files/safety.png", "#15803d"),
-        ("productivity",  "/files/safety.png",  "#15803d"),
-        ("attendance",    "/files/safety.png",  "#b8860b"),
-        ("absences",      "/files/safety.png", "#CE1426"),
-        ("discipline",    "/files/safety.png",  "#c06000"),
-        ("initiative",    "/files/safety.png",  "#7c3aed"),
-        ("teamwork",      "/files/safety.png",  "#0891b2"),
-        ("communication", "/files/safety.png",  "#0369a1"),
-        ("leadership",    "/files/safety.png",  "#b8860b"),
-        ("training",      "/files/safety.png", "#15803d"),
-        ("cost",          "/files/safety.png", "#c06000"),
-        ("delivery",      "/files/safety.png", "#0369a1"),
-        ("innovation",    "/files/safety.png", "#7c3aed"),
-        ("customer",      "/files/safety.png", "#CE1426"),
-        ("environment",   "/files/safety.png", "#15803d"),
-        ("project",       "/files/safety.png", "#0369a1"),
-        ("energy",        "/files/safety.png",  "#c06000"),
-        ("governance",    "/files/safety.png",  "#7c3aed"),
-    ]
-    for key, letter, color in MAP:
-        if key in n:
-            return letter, color
-    return name[:2].upper() if name else "?", "#c9a84c"
-
-
-def _section_head(title):
-    return (
-        f'<div style="font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;'
-        f'color:#CE1426;margin:24px 0 14px;padding-bottom:5px;'
-        f'border-bottom:2px solid #D4A017;">{title}</div>'
-    )
-
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
+
+
+
+import frappe
+from frappe.utils import getdate, today
+
 @frappe.whitelist()
-def download_pdf(filters):
-    """
-    Generate a clean WeasyPrint PDF for the given Appraisal docname.
+def update_overdue_appraisals():
+    current_date = getdate(today())
+    
+    expired_cycles = frappe.get_all("Appraisal Cycle", 
+        filters={"custom_locking_date": ["<", current_date]},
+        pluck="name"
+    )
+    appraisals = frappe.get_all("Appraisal",
+        filters=[
+            ["appraisal_cycle", "in", expired_cycles],
+            ["custom_appraisal_status", "!=", "Overdue"],
+            ["workflow_state", "not in", ["Approved", "Cancelled"]],
+            ["docstatus", "<", 2]
+        ],
+        fields=["name"]
+    )
+    for entry in appraisals:
+        doc = frappe.get_doc("Appraisal", entry.name)
+        doc.custom_appraisal_status = "Overdue"
+        doc.save(ignore_permissions=True)
+    not_expired_cycles = frappe.get_all("Appraisal Cycle", 
+        filters={"custom_locking_date": [">", current_date]},
+        pluck="name"
+    )
+    appraisals = frappe.get_all("Appraisal",
+        filters=[
+            ["appraisal_cycle", "in", not_expired_cycles],
+            ["custom_appraisal_status", "=", "Overdue"],
+            ["workflow_state", "not in", ["Approved", "Cancelled"]],
+            ["docstatus", "<", 2]
+        ],
+        fields=["name"]
+    )
+    for entry in appraisals:
+        doc = frappe.get_doc("Appraisal", entry.name)
+        doc.custom_appraisal_status = "Draft"
+        doc.save(ignore_permissions=True)
+        
 
-    Client:
-        window.open(frappe.urllib.get_full_url(
-            "/api/method/pms_ai.custom.download_pdf?filters="
-            + encodeURIComponent(frm.doc.name)
-        ));
-    """
-    appraisal_name = filters
-    frappe.has_permission("Appraisal", doc=appraisal_name, throw=True)
 
-    doc   = frappe.get_doc("Appraisal", appraisal_name)
-    goals = doc.get("goals") or []
+import frappe
+from frappe.utils import flt, getdate
 
-    is_worker = (doc.get("custom_grade") or "") in ["A1", "A2", "A3", "A4"]
 
-    # ── Images ───────────────────────────────────────────────────────────
-    emp_image = doc.get("image") or frappe.db.get_value("Employee", doc.employee, "image")
-    emp_img_html = (
-        f'<img src="{_safe(emp_image)}" style="width:100%;height:100%;object-fit:cover;">'
-        if emp_image
-        else f'<span style="font-family:Georgia,serif;font-size:28px;color:#c9a84c;line-height:88px;">'
-             f'{_initials(doc.employee_name)}</span>'
+@frappe.whitelist()
+def appraisal_rating_update(doc, method=None):
+    if not doc.has_value_changed("workflow_state"):
+        return
+
+    employee = frappe.get_doc("Employee", doc.employee)
+
+    year = getdate(doc.end_date).year if doc.end_date else ""
+
+    score = flt(doc.total_score or 0)
+
+    # # Staff Rating Logic
+    # if doc.custom_employment_type == "Staff":
+
+    #     if 0 <= score <= 1:
+    #         grade = "E"
+    #     elif 1 < score <= 2:
+    #         grade = "D"
+    #     elif 2 < score <= 3:
+    #         grade = "C"
+    #     elif 3 < score <= 4:
+    #         grade = "B"
+    #     elif 4 < score <= 5:
+    #         grade = "A"
+    #     else:
+    #         grade = ""
+
+    # # Worker Rating Logic
+    # elif doc.custom_employment_type == "Worker":
+
+    #     # Example:
+    #     # 0 - 2   -> C
+    #     # 2 - 4   -> B
+    #     # 4 - 5   -> A
+
+    #     if 0 <= score <= 2:
+    #         grade = "C"
+    #     elif 2 < score <= 4:
+    #         grade = "B"
+    #     elif 4 < score <= 5:
+    #         grade = "A"
+    #     else:
+    #         grade = ""
+
+    # else:
+        # grade = ""
+
+    if doc.workflow_state == "Approved":
+
+        exists = False
+
+        for row in employee.custom_previous_rating:
+            if row.appraisal == doc.name:
+                exists = True
+                row.rating = score
+                row.year = year
+
+        if not exists:
+            employee.append("custom_previous_rating", {
+                "appraisal": doc.name,
+                "rating": score,
+                "year": year
+            })
+
+        employee.save(ignore_permissions=True)
+        
+    elif doc.workflow_state == "Cancelled":
+
+        employee.custom_previous_rating = [
+            row for row in employee.custom_previous_rating
+            if row.appraisal != doc.name
+        ]
+
+        employee.save(ignore_permissions=True)
+
+
+
+
+
+import frappe
+from deep_translator import GoogleTranslator
+
+@frappe.whitelist()
+def translate_child_headers():
+    # 1. Update this to your exact Child DocType Name
+    child_doctype = "Significant Achievements" 
+    
+    # Fetch the child doctype configuration
+    doc = frappe.get_doc("DocType", child_doctype)
+    
+    for field in doc.fields:
+        if field.label:
+            # Automatically translates the current English label to Arabic
+            translated_text = GoogleTranslator(source='en', target='ar').translate(field.label)
+            
+            # This safely injects the translation into Frappe's translation system
+            if not frappe.db.exists("Translation", {"source_text": field.label, "language": "ar"}):
+                translation_doc = frappe.get_doc({
+                    "doctype": "Translation",
+                    "language": "ar",
+                    "source_text": field.label,
+                    "translated_text": translated_text
+                })
+                translation_doc.insert(ignore_permissions=True)
+            else:
+                frappe.db.set_value("Translation", {"source_text": field.label, "language": "ar"}, "translated_text", translated_text)
+            
+    # Clears system cache so the new Arabic text loads immediately
+    frappe.clear_cache(doctype=child_doctype)
+    frappe.db.commit()
+    
+    return "Translations completed successfully!"
+
+def update_the_kra_in_units():
+    # Get all appraisal assessor employees
+    assessors = frappe.get_all(
+        "Appraisal",
+        fields=["custom_assessor"],
+        filters={"custom_assessor": ["is", "set"]}
     )
 
-    assessor_image = None
-    if doc.get("custom_assessor"):
-        assessor_image = frappe.db.get_value("Employee", doc.custom_assessor, "image")
-    ass_img_html = (
-        f'<img src="{_safe(assessor_image)}" style="width:100%;height:100%;object-fit:cover;">'
-        if assessor_image
-        else f'<span style="font-family:Georgia,serif;font-size:12px;color:#c9a84c;line-height:32px;">'
-             f'{_initials(doc.get("custom_assessor_name") or "?")}</span>'
-    )
+    employee_list = list(set([d.custom_assessor for d in assessors if d.custom_assessor]))
+    count = 0
+    for employee in employee_list:
+        # Get User ID from Employee
+        user_id = frappe.db.get_value("Employee", employee, "user_id")
 
-    # ── Misc ─────────────────────────────────────────────────────────────
-    reviewer_name = _safe(doc.get("custom_assessor_name") or "—")
-    reviewer_desg = _safe(
-        frappe.db.get_value("Employee", doc.get("custom_assessor"), "designation") or ""
-    )
-    division    = frappe.db.get_value("Employee", doc.get("employee"), "custom_division") \
-                  or _safe(doc.get("department") or "")
-    pre_exp     = flt(doc.get("custom_previous_work_experience"))
-    galfar_exp  = flt(doc.get("custom_internal_work_experience"))
-    exp_str     = f"Pre-Galfar: {int(pre_exp)} Yrs &nbsp;|&nbsp; Galfar: {galfar_exp:.2f} Yrs"
-    doj         = formatdate(doc.get("custom_date_of_joining")) if doc.get("custom_date_of_joining") else "—"
-    start_date  = formatdate(doc.get("start_date")) if doc.get("start_date") else "—"
-    end_date    = formatdate(doc.get("end_date"))   if doc.get("end_date")   else "—"
-    total_score = _safe(doc.get("total_score") or "0")
-    self_score  = _safe(doc.get("custom_total_self_score") or "")
+        if user_id:
+            user = frappe.get_doc("User", user_id)
 
-    status_map   = {0: "Draft", 1: "Approved", 2: "Cancelled"}
-    status_label = status_map.get(doc.docstatus, "Draft")
-    status_bg    = "#D4A017" if status_label == "Draft" else "#28a745"
-    status_color = "#000"    if status_label == "Draft" else "#fff"
+            # Check role already exists
+            existing_roles = [d.role for d in user.roles]
 
-    logo_src = "/files/galfar-logo.png"
+            if "Appraisal Assessor" not in existing_roles:
+                user.append("roles", {
+                    "role": "Appraisal Assessor"
+                })
+                count +=1
+                # user.save(ignore_permissions=True)
+                print(f"Role added for: {user_id}")
 
-    # ── Performance grid columns ──────────────────────────────────────────
-    PG = [
-        ("1", "Poor",      "#CE1426", "#fdf2f3", "#f5c2c7",
-         "Performance is below expectations; behavior is contrary to company standards."),
-        ("2", "Acceptable","#c06000", "#fff8f0", "#fdd9aa",
-         "Inconsistent demonstration of this value; requires coaching or behavioral adjustment."),
-        ("3", "Good",      "#0369a1", "#f0f7fd", "#bae0f7",
-         "Consistently demonstrates this value in day-to-day work; meets the standard."),
-        ("4", "Very Good", "#15803d", "#f0fdf5", "#bbf7d0",
-         "Frequently goes above and beyond standard requirements regarding this value."),
-        ("5", "Excellent", "#b8860b", "#fefce8", "#fde68a",
-         "Consistently far exceeds expectations; acts as a role model and champions this value to others."),
-    ]
+    # frappe.db.commit()
 
-    pg_heads = ""
-    pg_descs = ""
-    for num, label, color, light, border, desc in PG:
-        dots = "".join(
-            f'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin:0 2px;'
-            f'background:{color if j < int(num) else border};"></span>'
-            for j in range(5)
-        )
-        pg_heads += (
-            f'<td style="width:20%;background:{light};border-right:1px solid {border};'
-            f'border-bottom:4px solid {color};padding:12px 6px 10px;text-align:center;vertical-align:top;">'
-            f'<div style="width:32px;height:32px;border-radius:7px;background:{color};'
-            f'color:#fff;font-size:13px;font-weight:700;text-align:center;'
-            f'line-height:32px;margin:0 auto 6px;">{num}</div>'
-            f'<div style="font-size:11px;font-weight:700;color:{color};text-transform:uppercase;'
-            f'letter-spacing:.5px;margin-bottom:5px;">{label}</div>'
-            f'<div>{dots}</div></td>'
-        )
-        pg_descs += (
-            f'<td style="width:20%;background:{light};border-right:1px solid {border};'
-            f'vertical-align:top;padding:0;">'
-            f'<div style="height:3px;background:{color};"></div>'
-            f'<div style="padding:9px 9px 12px;font-size:10.5px;line-height:1.6;color:#1e293b;">{desc}</div>'
-            f'</td>'
-        )
+    print(count)
 
-    # worker criteria
-    worker_html = ""
-    if is_worker:
-        worker_html = """
-        <div style="margin:14px;border:1.5px solid rgba(201,168,76,0.5);border-radius:9px;
-                    padding:12px;background:#fff9f0;">
-            <div style="font-weight:700;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;
-                        color:#CE1426;margin-bottom:10px;">Evaluation Criteria</div>
-            <table style="width:100%;border-collapse:collapse;font-size:10px;">
-                <tr>
-                    <td style="width:50%;vertical-align:top;padding-right:8px;">
-                        <div style="background:#fff;border:1px solid rgba(201,168,76,0.5);border-radius:6px;padding:8px 10px;">
-                            <div style="font-weight:700;color:#CE1426;margin-bottom:5px;">Productivity %</div>
-                            <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dashed #e5c880;"><span>1 - Poor</span><span>Below 86%</span></div>
-                            <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dashed #e5c880;"><span>2 - Acceptable</span><span>87%–90%</span></div>
-                            <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dashed #e5c880;"><span>3 - Good</span><span>91%–100%</span></div>
-                            <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dashed #e5c880;"><span>4 - Very Good</span><span>101%–120%</span></div>
-                            <div style="display:flex;justify-content:space-between;padding:2px 0;"><span>5 - Excellent</span><span>Above 120%</span></div>
-                        </div>
-                    </td>
-                    <td style="width:50%;vertical-align:top;padding-left:8px;">
-                        <div style="background:#fff;border:1px solid rgba(201,168,76,0.5);border-radius:6px;padding:8px 10px;">
-                            <div style="font-weight:700;color:#CE1426;margin-bottom:5px;">Absences</div>
-                            <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dashed #e5c880;"><span>1 - Poor</span><span>7 Days+</span></div>
-                            <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dashed #e5c880;"><span>2 - Acceptable</span><span>5–6 Days</span></div>
-                            <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dashed #e5c880;"><span>3 - Good</span><span>3–4 Days</span></div>
-                            <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dashed #e5c880;"><span>4 - Very Good</span><span>1–2 Days</span></div>
-                            <div style="display:flex;justify-content:space-between;padding:2px 0;"><span>5 - Excellent</span><span>Zero Unauthorized</span></div>
-                        </div>
-                    </td>
-                </tr>
-            </table>
-        </div>"""
+def update_empty_fields_value(doc, method):
+    previous = doc.get_doc_before_save()
 
-    # ── KRA cards ─────────────────────────────────────────────────────────
-    kra_cells = []
-    for row in goals:
-        if (row.get("custom_unit") or "").strip() != "Common":
-            continue
-        if row.get("kra") in ["PRODUCTIVITY", "ABSENCES"]:
-            continue
-        kra_name   = cstr(row.get("kra") or "")
-        assr_stars = round(flt(row.get("custom_assessor_score") or 0) * 5)
-        self_stars = round(flt(row.get("custom_self_score") or 0) * 5)
-        letter, color = _kra_badge(kra_name)
-        pill_css   = PILL_STYLES.get(_pill_cls(assr_stars), "")
+    if previous and previous.workflow_state != doc.workflow_state:
 
-        self_section = ""
-        if not is_worker:
-            self_section = (
-                f'<div style="font-size:8px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;'
-                f'color:#6b7280;margin-top:4px;">Self</div>'
-                f'<div style="line-height:1;">{_stars_html(self_stars, "self")}</div>'
-            )
+        if doc.workflow_state in ["Pending for Assessor", "Approved", "Accepted"]:
+            fieldlists = [
+                "custom_significant_achievements",
+                "custom_targets",
+                    "custom_accessor_comments",
+                "custom_employee_comments"
+            ]
+           
 
-        kra_cells.append(
-            f'<td style="width:25%;padding:4px;vertical-align:top;">'
-            f'<div style="border:1.5px solid rgba(201,168,76,0.5);border-top:3px solid #c9a84c;'
-            f'border-radius:10px;padding:10px 7px 8px;'
-            f'background:linear-gradient(160deg,#fff 55%,#fff9ee 100%);'
-            f'text-align:center;page-break-inside:avoid;">'
-            f'<div style="width:36px;height:36px;border-radius:50%;'
-            f'color:#fff;font-size:12px;font-weight:700;text-align:center;'
-            f'line-height:36px;margin:0 auto 5px;"><img src="{letter}" style="max-height:30px;width:auto;"></div>'
-            f'<div style="font-size:9px;font-weight:700;color:#1a1a2e;text-transform:uppercase;'
-            f'line-height:1.3;min-height:22px;">{_safe(kra_name)}</div>'
-            f'{self_section}'
-            f'<div style="font-size:8px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;'
-            f'color:#6b7280;margin-top:4px;">Assessor</div>'
-            f'<div style="line-height:1;">{_stars_html(assr_stars, "assessor")}</div>'
-            f'<div style="margin-top:4px;">'
-            f'<span style="display:inline-block;padding:2px 8px;border-radius:20px;'
-            f'font-weight:700;font-size:9px;{pill_css}">{assr_stars} / 5</span>'
-            f'</div></div></td>'
-        )
+            for field_name in fieldlists:
 
-    kra_section_html = ""
-    if kra_cells:
-        rows_html = ""
-        for i in range(0, len(kra_cells), 4):
-            chunk = kra_cells[i:i+4]
-            while len(chunk) < 4:
-                chunk.append('<td style="width:25%;"></td>')
-            rows_html += f"<tr>{''.join(chunk)}</tr>"
-        kra_section_html = (
-            _section_head("Galfar Values") +
-            f'<table style="width:100%;border-collapse:collapse;margin-bottom:4px;">{rows_html}</table>'
-        )
+                # Get field meta
+                field = doc.meta.get_field(field_name)
 
-    # ── Goals table ───────────────────────────────────────────────────────
-    goal_rows_html = ""
-    idx = 0
-    for row in goals:
-        if (row.get("custom_unit") or "").strip() == "Common":
-            if row.get("kra") not in ["PRODUCTIVITY", "ABSENCES"]:
-                continue
-        idx += 1
-        kra_name   = _safe(row.get("kra") or "")
-        weightage  = flt(row.get("per_weightage") or 0)
-        desc       = _safe(row.get("custom_description") or "")
-        assr_stars = round(flt(row.get("custom_assessor_score") or 0) * 5)
-        self_stars = round(flt(row.get("custom_self_score") or 0) * 5)
-        pill_css   = PILL_STYLES.get(_pill_cls(assr_stars), "")
-        row_bg     = "#fff9f0" if idx % 2 == 1 else "#ffffff"
-        td         = f"padding:8px 10px;border-right:1px solid rgba(201,168,76,.15);background:{row_bg};"
+                if not field:
+                    continue
 
-        self_td = ""
-        if not is_worker:
-            self_td = (
-                f'<td style="{td}text-align:center;">'
-                f'{_stars_html(self_stars, "self")}'
-                f'<div style="font-size:8px;color:#9ca3af;margin-top:1px;">{self_stars} / 5</div>'
-                f'</td>'
-            )
+                field_type = field.fieldtype
 
-        goal_rows_html += (
-            f'<tr style="page-break-inside:avoid;">'
-            f'<td style="{td}text-align:center;width:30px;">{idx}</td>'
-            f'<td style="{td}font-weight:600;">{kra_name}</td>'
-            f'<td style="{td}font-size:10px;color:#6b7280;">{desc}</td>'
-            f'<td style="{td}text-align:center;width:50px;">{int(weightage)}%</td>'
-            f'{self_td}'
-            f'<td style="{td}text-align:center;">'
-            f'{_stars_html(assr_stars, "assessor")}'
-            f'<div style="font-size:8px;color:#9ca3af;margin-top:1px;">{assr_stars} / 5</div>'
-            f'</td>'
-            f'<td style="padding:8px 10px;text-align:center;background:{row_bg};">'
-            f'<span style="display:inline-block;padding:2px 8px;border-radius:20px;'
-            f'font-weight:700;font-size:9px;{pill_css}">{assr_stars} / 5</span>'
-            f'</td></tr>'
-        )
+                # Skip unwanted field types
+                if field_type in ["Section Break","Column Break","Heading","Read Only","Date","HTML","Select","Link","Float","Int","Tab Break","Attach Image"]:
+                    continue
 
-    self_th = (
-        '<th style="padding:9px 10px;text-align:center;color:rgba(255,255,255,.9);'
-        'border-right:1px solid rgba(255,255,255,.12);font-size:8px;font-weight:700;'
-        'letter-spacing:1px;text-transform:uppercase;white-space:nowrap;">Self Score</th>'
-    ) if not is_worker else ""
+                # Handle Child Tables
+                if field_type == "Table":
 
-    goals_section_html = ""
-    if goal_rows_html:
-        def _th(txt, align="center", extra=""):
-            return (
-                f'<th style="padding:9px 10px;text-align:{align};color:rgba(255,255,255,.9);'
-                f'border-right:1px solid rgba(255,255,255,.12);font-size:8px;font-weight:700;'
-                f'letter-spacing:1px;text-transform:uppercase;white-space:nowrap;{extra}">{txt}</th>'
-            )
-        goals_section_html = (
-            _section_head("Goals") +
-            f'<table style="width:100%;border-collapse:collapse;'
-            f'border:1.5px solid rgba(201,168,76,0.5);border-radius:10px;overflow:hidden;font-size:11px;">'
-            f'<thead><tr style="background:linear-gradient(135deg,#8a0d1a 0%,#CE1426 100%);'
-            f'border-bottom:2px solid #c9a84c;">'
-            f'{_th("#","center","width:30px;")}'
-            f'{_th("Goal (KRA)","left")}'
-            f'{_th("Description","left")}'
-            f'{_th("Wt %","center","width:50px;")}'
-            f'{self_th}'
-            f'{_th("Assessor Score","center")}'
-            f'{_th("Rating","center","border-right:none;")}'
-            f'</tr></thead>'
-            f'<tbody>{goal_rows_html}</tbody></table>'
-        )
+                    table_rows = doc.get(field_name)
 
-    # ── Score summary ─────────────────────────────────────────────────────
-    def _score_card(label, value):
-        return (
-            f'<td style="width:50%;padding:4px;vertical-align:top;">'
-            f'<div style="border:1.5px solid rgba(201,168,76,0.5);border-radius:12px;'
-            f'padding:18px 16px;text-align:center;'
-            f'background:linear-gradient(160deg,#fff 50%,#fff9ee 100%);'
-            f'position:relative;overflow:hidden;">'
-            f'<div style="position:absolute;top:0;left:0;right:0;height:4px;'
-            f'background:linear-gradient(90deg,#8a0d1a,#CE1426,#c9a84c,#e8c97a,#c9a84c,#8a0d1a);"></div>'
-            f'<div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;'
-            f'color:#CE1426;margin-bottom:7px;">{label}</div>'
-            f'<div style="font-family:Georgia,serif;font-size:28px;color:#1a1a2e;">{value}</div>'
-            f'<div style="font-size:9px;color:#9ca3af;margin-top:4px;">out of 5.00</div>'
-            f'</div></td>'
-        )
+                    if field_name in [
+                        "custom_significant_achievements",
+                        "custom_targets"
+                    ]:
 
-    score_cells = ""
-    if self_score and not is_worker:
-        score_cells += _score_card("Overall Effectiveness – Self Assessment", self_score)
-    score_cells += _score_card("Overall Effectiveness – Assessor Assessment", total_score)
+                        # Add empty row if no rows exist
+                        if not table_rows:
 
-    # pad to 2 cols if only 1 card
-    if not (self_score and not is_worker):
-        score_cells = (
-            f'<td style="width:50%;padding:4px;vertical-align:top;">'
-            + _score_card("Overall Effectiveness – Assessor Assessment", total_score).split("</td>")[0]
-            + "</td><td></td>"
-        )
+                            child = doc.append(field_name, {})
 
-    score_summary_html = (
-        _section_head("Score Summary") +
-        f'<table style="width:100%;border-collapse:collapse;max-width:600px;">'
-        f'<tr>{score_cells}</tr></table>'
-    )
+                            # Get child table meta
+                            child_meta = frappe.get_meta(field.options)
 
-    # ── Full HTML ─────────────────────────────────────────────────────────
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"/>
-<style>
-  @page {{ size: A4; margin: 8mm; }}
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{
-    font-family: Arial, Helvetica, sans-serif;
-    font-size: 12px;
-    color: #1a1a2e;
-    background: #faf8f4;
-  }}
-  .gold-frame {{
-    border: 5px solid #c9a84c;
-    border-radius: 14px;
-    overflow: hidden;
-    background: #faf8f4;
-  }}
-  .inner {{
-    border-radius: 10px;
-    overflow: hidden;
-    background: #fff;
-  }}
-</style>
-</head>
-<body>
-<div class="gold-frame">
-<div class="inner">
+                            # Set "-" for child table fields
+                            for child_field in child_meta.fields:
 
-<!-- ═══ HEADER ═══ -->
-<div style="background:#CE1426;padding:22px 28px 18px;border-bottom:3px solid #c9a84c;position:relative;">
-    <table style="width:100%;border-collapse:collapse;">
-        <tr>
-            <td style="width:88px;vertical-align:middle;padding-right:18px;">
-                <div style="width:88px;height:88px;border-radius:50%;overflow:hidden;
-                            border:3px solid #c9a84c;background:#8a0d1a;
-                            text-align:center;display:table-cell;vertical-align:middle;">
-                    {emp_img_html}
-                </div>
-            </td>
-            <td style="vertical-align:top;padding-top:4px;">
-                <div style="font-family:Georgia,serif;font-size:22px;color:#fff;
-                            margin-bottom:3px;line-height:1.2;">{_safe(doc.employee_name)}</div>
-                <div style="font-size:11px;color:rgba(255,255,255,.7);margin-bottom:8px;">
-                    {_safe(doc.get("designation") or "")}
-                    {"&nbsp;&middot;&nbsp;" + _safe(division) if division else ""}
-                </div>
-                <span style="background:rgba(201,168,76,.2);color:#e8c97a;
-                             border:1px solid rgba(201,168,76,.4);
-                             padding:2px 9px;border-radius:20px;font-size:9px;font-weight:600;margin-right:5px;">
-                    {_safe(doc.company)}
-                </span>
-                <span style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.8);
-                             border:1px solid rgba(255,255,255,.2);
-                             padding:2px 9px;border-radius:20px;font-size:9px;font-weight:600;margin-right:5px;">
-                    Cycle: {_safe(doc.appraisal_cycle or "")}
-                </span>
-                <span style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.8);
-                             border:1px solid rgba(255,255,255,.2);
-                             padding:2px 9px;border-radius:20px;font-size:9px;font-weight:600;">
-                    Grade: {_safe(doc.get("custom_grade") or "")}
-                </span>
-            </td>
-            <td style="width:160px;text-align:right;vertical-align:top;">
-                <div style="font-size:10px;font-weight:700;color:#e8c97a;letter-spacing:.8px;margin-bottom:5px;">
-                    &#x1F4C4; {_safe(doc.name)}
-                </div>
-                <span style="display:inline-block;padding:2px 10px;border-radius:20px;font-size:9px;
-                             font-weight:700;background:{status_bg};color:{status_color};
-                             border:1px solid rgba(0,0,0,.3);">
-                    &#x25CF; {status_label}
-                </span>
-                <div style="margin-top:8px;">
-                    <img src="{logo_src}" style="max-height:46px;width:auto;">
-                </div>
-            </td>
-        </tr>
-    </table>
-</div>
-<!-- stripe -->
-<div style="height:5px;background:linear-gradient(90deg,#8a0d1a 0%,#CE1426 25%,#c9a84c 55%,#e8c97a 75%,#c9a84c 90%,#8a0d1a 100%);"></div>
+                                if child_field.fieldtype in ["Section Break","Column Break","Heading","Read Only","Table","Date","Select","Link"]:
+                                    continue
+                                if child_field.fieldname=="description":
+                                    child.set(child_field.fieldname, "-")
 
-<!-- ═══ BODY ═══ -->
-<div style="padding:22px 28px 28px;background:#fff;">
 
-    <!-- Employee Details -->
-    {_section_head("Employee Details")}
-    <table style="width:100%;border-collapse:collapse;border:1.5px solid rgba(201,168,76,0.5);
-                  border-radius:8px;overflow:hidden;margin-bottom:4px;">
-        <tr>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);border-right:1px solid rgba(201,168,76,.2);background:#fff9f0;width:25%;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">GEC No</div>
-                <div style="font-size:12px;font-weight:500;">{_safe(doc.get("custom_gec_no") or "")}</div>
-            </td>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);border-right:1px solid rgba(201,168,76,.2);background:#fff9f0;width:25%;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Employee Name</div>
-                <div style="font-size:12px;font-weight:500;">{_safe(doc.employee_name)}</div>
-            </td>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);border-right:1px solid rgba(201,168,76,.2);background:#fff9f0;width:25%;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Company</div>
-                <div style="font-size:12px;font-weight:500;">{_safe(doc.company)}</div>
-            </td>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);background:#fff9f0;width:25%;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Grade</div>
-                <div style="font-size:12px;font-weight:500;">{_safe(doc.get("custom_grade") or "")}</div>
-            </td>
-        </tr>
-        <tr>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);border-right:1px solid rgba(201,168,76,.2);background:#fff;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Department</div>
-                <div style="font-size:12px;font-weight:500;">{_safe(division)}</div>
-            </td>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);border-right:1px solid rgba(201,168,76,.2);background:#fff;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Designation</div>
-                <div style="font-size:12px;font-weight:500;">{_safe(doc.get("designation") or "")}</div>
-            </td>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);border-right:1px solid rgba(201,168,76,.2);background:#fff;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Unit</div>
-                <div style="font-size:12px;font-weight:500;">{_safe(doc.get("custom_unit") or "")}</div>
-            </td>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);background:#fff;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Assessment Date</div>
-                <div style="font-size:12px;font-weight:500;">{formatdate(doc.get("creation") or "")}</div>
-            </td>
-        </tr>
-        <tr>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);border-right:1px solid rgba(201,168,76,.2);background:#fff9f0;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Date of Joining</div>
-                <div style="font-size:12px;font-weight:500;">{doj}</div>
-            </td>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);border-right:1px solid rgba(201,168,76,.2);background:#fff9f0;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Qualification</div>
-                <div style="font-size:12px;font-weight:500;">{_safe(doc.get("custom_qualification") or "")}</div>
-            </td>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);border-right:1px solid rgba(201,168,76,.2);background:#fff9f0;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Certifications</div>
-                <div style="font-size:12px;font-weight:500;">{_safe(doc.get("custom_certifications") or "")}</div>
-            </td>
-            <td style="padding:9px 13px;border-bottom:1px solid rgba(201,168,76,.2);background:#fff9f0;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Experience</div>
-                <div style="font-size:12px;font-weight:500;">{exp_str}</div>
-            </td>
-        </tr>
-        <tr>
-            <td style="padding:9px 13px;border-right:1px solid rgba(201,168,76,.2);background:#fff;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Appraisal Cycle</div>
-                <div style="font-size:12px;font-weight:500;">{_safe(doc.get("appraisal_cycle") or "—")}</div>
-            </td>
-            <td style="padding:9px 13px;border-right:1px solid rgba(201,168,76,.2);background:#fff;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Period</div>
-                <div style="font-size:12px;font-weight:500;">{start_date} &rarr; {end_date}</div>
-            </td>
-            <td style="padding:9px 13px;border-right:1px solid rgba(201,168,76,.2);background:#fff;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:3px;">Total Score</div>
-                <div style="font-family:Georgia,serif;font-size:20px;color:#8B6508;font-weight:700;">{total_score}</div>
-            </td>
-            <td style="padding:9px 13px;background:#fff;vertical-align:top;">
-                <div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#8B6508;margin-bottom:5px;">Assessor</div>
-                <table style="border-collapse:collapse;">
-                    <tr>
-                        <td style="width:32px;padding-right:7px;vertical-align:middle;">
-                            <div style="width:32px;height:32px;border-radius:50%;background:#8a0d1a;
-                                        border:2px solid #c9a84c;overflow:hidden;
-                                        text-align:center;display:table-cell;vertical-align:middle;">
-                                {ass_img_html}
-                            </div>
-                        </td>
-                        <td style="vertical-align:middle;">
-                            <div style="font-size:11px;font-weight:600;">{reviewer_name}</div>
-                            <div style="font-size:9px;color:#9ca3af;">{reviewer_desg}</div>
-                        </td>
-                    </tr>
-                </table>
-            </td>
-        </tr>
-    </table>
+                # Handle normal custom fields
+                value = doc.get(field_name)
 
-    <!-- Performance Grid -->
-    {_section_head("Performance Grid")}
-    <div style="border:1.5px solid rgba(201,168,76,0.5);border-radius:10px;overflow:hidden;margin-bottom:4px;">
-        <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
-            <tr>
-                <td colspan="5" style="background:#CE1426;color:#fff;
-                                       font-family:Georgia,serif;font-size:12px;font-weight:700;
-                                       letter-spacing:3px;text-transform:uppercase;text-align:center;
-                                       padding:11px 14px;border-bottom:2px solid #c9a84c;">
-                    PERFORMANCE RATING GRID
-                </td>
-            </tr>
-            <tr>{pg_heads}</tr>
-            <tr>{pg_descs}</tr>
-        </table>
-        {worker_html}
-        <!-- OE bar -->
-        <table style="width:100%;border-collapse:collapse;background:#CE1426;border-top:2px solid #c9a84c;">
-            <tr>
-                <td style="padding:11px 18px;font-family:Georgia,serif;font-size:12px;font-weight:700;
-                           letter-spacing:2px;text-transform:uppercase;color:#e8c97a;">
-                    OVERALL EFFECTIVENESS
-                </td>
-                <td style="padding:11px 18px;text-align:right;font-family:Georgia,serif;font-size:24px;
-                           font-weight:700;color:#e8c97a;border-left:1px solid rgba(201,168,76,.3);
-                           width:120px;background:rgba(201,168,76,.1);">
-                    {total_score}
-                </td>
-            </tr>
-        </table>
-    </div>
+                # Skip accessor comments during Pending for Assessor
+                if (
+                    field_name == "custom_accessor_comments"
+                    and doc.workflow_state == "Pending for Assessor"
+                ):
+                    continue
 
-    <!-- KRA Cards (Galfar Values) -->
-    {kra_section_html}
+                # Set "-" if empty
+                if value in [None, "", []]:
+                    doc.set(field_name, "-")
 
-    <!-- Goals Table -->
-    {goals_section_html}
 
-    <!-- Score Summary -->
-    {score_summary_html}
+@frappe.whitelist(allow_guest=True)
+def validate_kb(file_url):
+    file_size = frappe.db.get_value('File', {'file_url': file_url}, ['file_size'])
+    if file_size and file_size > 102400:
+        return 'Not Allow'
+    return 'Allow'
 
-</div>
 
-<!-- ═══ FOOTER ═══ -->
-<table style="width:100%;border-collapse:collapse;border-top:2px solid rgba(201,168,76,0.5);
-              background:linear-gradient(90deg,#fff9f0,#fff6e8,#fff9f0);padding:10px 28px;">
-    <tr>
-        <td style="padding:10px 28px;font-size:10px;color:#6b7280;vertical-align:middle;">
-            If anyone scores 1 &amp; 2 in Safety it will not be considered as 4 &amp; 5 in Overall Effectiveness rating.
-        </td>
-        <td style="padding:10px 28px;text-align:right;vertical-align:middle;width:120px;">
-            <span style="font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;
-                         color:#8B6508;background:linear-gradient(135deg,#FBF0C0,#fff8d0);
-                         border:1px solid rgba(201,168,76,0.5);padding:3px 10px;border-radius:20px;">
-                Note
-            </span>
-        </td>
-    </tr>
-</table>
-
-</div><!-- inner -->
-</div><!-- gold-frame -->
-</body>
-</html>"""
-
-    # ── Generate & stream ─────────────────────────────────────────────────
-    pdf_bytes = get_pdf(html, {"page-size": "A4", "margin-top": "8mm", "margin-right": "8mm",
-                                "margin-bottom": "8mm", "margin-left": "8mm", "encoding": "UTF-8"})
-
-    emp_name = (doc.employee_name or appraisal_name).replace(" ", "_")
-    frappe.local.response.filename    = f"Appraisal_{emp_name}_{appraisal_name}.pdf"
-    frappe.local.response.filecontent = pdf_bytes
-    frappe.local.response.type        = "pdf"
+@frappe.whitelist()
+def validate_and_set_image(file_url, employee):
+    size_check=validate_kb(file_url)
+    if size_check == 'Not Allow':
+        return "Not Allow"
+    frappe.db.set_value('Employee', employee, 'image', file_url, update_modified=True)
+    frappe.db.commit()
+    
+    return "Success"

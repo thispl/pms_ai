@@ -1,19 +1,18 @@
 {
  "content": null,
- "creation": "2026-03-14 14:51:23.367572",
+ "creation": "2026-05-15 13:03:45.453967",
  "docstatus": 0,
  "doctype": "Page",
- "idx": 1,
- "modified": "2026-05-27 15:16:19.963557",
+ "idx": 0,
+ "modified": "2026-05-15 13:03:45.453967",
  "modified_by": "Administrator",
  "module": "PMS",
- "name": "ai-analysis",
+ "name": "performance-trends",
  "owner": "Administrator",
- "page_name": "ai-analysis",
+ "page_name": "performance-trends",
  "roles": [],
  "script": null,
  "standard": "Yes",
  "style": null,
- "system_page": 1,
- "title": "AI Analysis"
+ "system_page": 0
 }
