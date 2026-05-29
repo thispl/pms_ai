@@ -128,7 +128,7 @@ def analyze_dashboard_chart(chart_context, chart_data):
     api_key = frappe.conf.get("gemini_api_key")
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
-
+    frappe.errprint(chart_context)
     # Tell Gemini what context it is looking at based on the chart
     if chart_context == "completion_status":
         prompt_instruction = "Analyze the ratio of completed vs pending appraisals. Identify if the completion rate is healthy or if there are bottlenecks."
@@ -138,6 +138,19 @@ def analyze_dashboard_chart(chart_context, chart_data):
         prompt_instruction = "Analyze the daily pacing of appraisal submissions. Note any sudden spikes or long lulls that indicate low engagement."
     elif chart_context == "nine_box":
         prompt_instruction = "Analyze this 9-box talent matrix distribution. Identify if we have a healthy pipeline of future leaders (High Potential/Outstanding Perf) and note the risk of underperformers. Provide succession planning recommendations."
+    elif chart_context == "ageing_insights":
+        prompt_instruction = """
+            Analyze the appraisal ageing data and provide a concise executive summary in 1-2 paragraphs.
+
+            Requirements:
+            - Highlight important metrics, percentages, ageing values, statuses, units, grades, and risk indicators using <strong>HTML tags</strong>.
+            - Focus on key insights, bottlenecks, risks, and recommendations.
+            - Keep the response professional, concise, and actionable.
+            - Do not use headings, bullet points, markdown, tables, or code blocks.
+            - Return only plain HTML paragraphs using <p> tags.
+            - Emphasize critical findings and recommended actions.
+        """
+        
     prompt = f"""
     You are an HR Executive Analyst. 
     
