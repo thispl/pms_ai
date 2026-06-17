@@ -4,13 +4,17 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 1,
- "modified": "2026-05-27 15:16:19.963557",
+ "modified": "2026-05-30 11:03:15.226295",
  "modified_by": "Administrator",
  "module": "PMS",
  "name": "ai-analysis",
  "owner": "Administrator",
  "page_name": "ai-analysis",
- "roles": [],
+ "roles": [
+  {
+   "role": "System Manager"
+  }
+ ],
  "script": null,
  "standard": "Yes",
  "style": null,

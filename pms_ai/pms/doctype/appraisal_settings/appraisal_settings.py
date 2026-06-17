@@ -9,8 +9,56 @@ from datetime import timedelta
 from frappe import _
 from frappe.utils import cint
 class AppraisalSettings(Document):
-	pass
+	def validate(self):
+		for row in self.sub_admin_details:
+			user_doc = frappe.get_doc("User", row.user)
+			if row.user:
+				if row.status == "Active":
+					existing_roles = [d.role for d in user_doc.roles]
+					# If no role profile exists, add direct role
+					if not user_doc.role_profiles:
+						if "HR Manager" not in existing_roles:
+							user_doc.append("roles", {
+								"role": "HR Manager"
+							})
+							user_doc.save(ignore_permissions=True)
+						
+					# Handle role profiles in V16
+					else:
+						for row in user_doc.role_profiles:
 
+							role_profile = frappe.get_doc(
+								"Role Profile",
+								row.role_profile
+							)
+
+							role_profile_roles = [
+								d.role for d in role_profile.roles
+							]
+
+							if "HR Manager" not in role_profile_roles:
+								user_doc.role_profiles =[]
+								user_doc.append("roles", {
+									"role": "HR Manager"
+								})
+
+
+						# Also ensure direct role exists
+						if "HR Manager" not in existing_roles:
+							user_doc.append("roles", {
+								"role": "HR Manager"
+							})
+
+					user_doc.save(ignore_permissions=True)
+
+				elif row.status == "Inactive":
+
+					user_doc.roles = [
+						d for d in user_doc.roles
+						if d.role != "HR Manager"
+					]
+
+					user_doc.save(ignore_permissions=True)
 
 
 @frappe.whitelist()
@@ -65,29 +113,27 @@ def update_assessor(assessor=None, unit=None, employee=None,remarks = None):
 		"status": "Active"
 	}
 
-	if unit:
-		filters["custom_unit"] = unit
-
+	
+			
+	message = []
 	if employee:
 		filters["name"] = employee
-
+	# if unit:
+	# 	filters["custom_unit"] = unit
 	employees = frappe.get_all(
 		"Employee",
 		filters=filters,
-		fields=["name", "grade", "date_of_joining","company"]
+		fields=["name", "grade", "date_of_joining","company","custom_unit"]
 	)
-
 	updated = 0
 
 	assessor_doc = frappe.get_doc("Employee", assessor)
-	message = []
+	
 	# Validation
 	if assessor_doc.grade in [
 		"A1", "A2", "A3", "A4",
 		"B1", "B2", "B3", "B4", "B5"
 	]:
-		
-		
 		message.append(
 			_("{0}: Minimum assessor grade should be C1 and above").format(
 				assessor_doc.employee_name
@@ -123,6 +169,18 @@ def update_assessor(assessor=None, unit=None, employee=None,remarks = None):
 					assessor_doc.employee_name
 				)
 			)
+		if emp.grade in ["A1", "A2", "A3", "A4"]:
+			appraisal_template = f"{emp.grade} - Worker"
+		else:
+			appraisal_template = f"{emp.grade} - {unit}"
+		if not frappe.db.exists("Appraisal Template", appraisal_template):
+			message.append(
+				_("{0}: Cannot change Unit because Appraisal Template '{1}' does not exist").format(
+					emp.name,
+					appraisal_template
+				)
+			)
+			continue
 		# Assessor should be higher grade
 		if emp.grade and assessor_doc.grade and emp.grade >= assessor_doc.grade:
 			continue
@@ -134,11 +192,15 @@ def update_assessor(assessor=None, unit=None, employee=None,remarks = None):
 			continue
 		emp_doc = frappe.get_doc("Employee",emp.name)
 		emp_doc.reports_to = assessor
+		emp_doc.custom_unit = unit
+		emp_doc.custom_appraisal_template = appraisal_template
 		emp_doc.save(ignore_permissions=True)
 		if remarks:
 			if frappe.db.exists("Appraisal", remarks):
 				appraisal_doc = frappe.get_doc("Appraisal", remarks)
 				appraisal_doc.custom_assessor = assessor
+				appraisal_doc.custom_unit = unit
+				appraisal_doc.appraisal_template = appraisal_template
 				appraisal_doc.save(ignore_permissions=True)
 		else:
 			latest_appraisal = frappe.get_all(
@@ -152,6 +214,8 @@ def update_assessor(assessor=None, unit=None, employee=None,remarks = None):
 			if latest_appraisal:
 				appraisal_doc = frappe.get_doc("Appraisal", latest_appraisal[0].name)
 				appraisal_doc.custom_assessor = assessor
+				appraisal_doc.custom_unit = unit
+				appraisal_doc.appraisal_template = appraisal_template
 				appraisal_doc.save(ignore_permissions=True)
 
 		updated += 1

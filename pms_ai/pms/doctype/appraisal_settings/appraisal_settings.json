@@ -25,7 +25,9 @@
   "assessor",
   "section_break_kkid",
   "employees",
-  "assessor_change"
+  "assessor_change",
+  "sub_admin_details_tab",
+  "sub_admin_details"
  ],
  "fields": [
   {
@@ -91,7 +93,7 @@
    "depends_on": "employees",
    "fieldname": "assessor_change",
    "fieldtype": "Button",
-   "label": "Change Assessor"
+   "label": "Change Assessor / Unit"
   },
   {
    "fieldname": "employee",
@@ -111,7 +113,7 @@
   {
    "fieldname": "assessor_change_tab",
    "fieldtype": "Tab Break",
-   "label": "Change Assessor"
+   "label": "Change Assessor and Unit"
   },
   {
    "fieldname": "appraisal_template",
@@ -141,6 +143,17 @@
   {
    "fieldname": "column_break_zwfk",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sub_admin_details_tab",
+   "fieldtype": "Tab Break",
+   "label": "Sub Admin Details"
+  },
+  {
+   "fieldname": "sub_admin_details",
+   "fieldtype": "Table",
+   "label": "Sub Admin Details ",
+   "options": "Sub Admin Details"
   }
  ],
  "grid_page_length": 50,
@@ -148,7 +161,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-23 23:44:32.714871",
+ "modified": "2026-06-08 16:33:05.944199",
  "modified_by": "Administrator",
  "module": "PMS",
  "name": "Appraisal Settings",

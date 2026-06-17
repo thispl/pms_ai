@@ -4,13 +4,17 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-03-15 13:57:57.231266",
+ "modified": "2026-05-30 15:37:31.489308",
  "modified_by": "Administrator",
  "module": "PMS",
  "name": "appraisal-dashboard",
  "owner": "Administrator",
  "page_name": "appraisal-dashboard",
- "roles": [],
+ "roles": [
+  {
+   "role": "System Manager"
+  }
+ ],
  "script": null,
  "standard": "Yes",
  "style": null,

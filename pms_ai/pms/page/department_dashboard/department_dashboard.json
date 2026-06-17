@@ -4,13 +4,17 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-03-31 18:50:40.002299",
+ "modified": "2026-05-30 15:32:54.015949",
  "modified_by": "Administrator",
  "module": "PMS",
  "name": "department-dashboard",
  "owner": "Administrator",
  "page_name": "department-dashboard",
- "roles": [],
+ "roles": [
+  {
+   "role": "System Manager"
+  }
+ ],
  "script": null,
  "standard": "Yes",
  "style": null,

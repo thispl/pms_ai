@@ -27,7 +27,7 @@ app_license = "mit"
 # include js, css files in header of desk.html
 # app_include_css = "/assets/pms_ai/css/pms_ai.css"
 app_include_js = ["/assets/pms_ai/js/custom_workspace.js","/assets/pms_ai/js/desktop_redirect.js"]
-# login_redirect_url = "/app/pms-dashboard"
+# login_redirect_url = "/desk"	
 
 # include js, css files in header of web template
 # web_include_css = "/assets/pms_ai/css/pms_ai.css"
@@ -59,7 +59,7 @@ doctype_js = {
 # ----------
 
 # application home page (will override Website Settings)
-home_page = "desk/pms-dashboard"
+home_page = "login"
 
 # website user home page (by Role)
 # role_home_page = {

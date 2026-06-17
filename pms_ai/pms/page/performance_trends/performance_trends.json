@@ -4,13 +4,17 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-05-15 13:03:45.453967",
+ "modified": "2026-05-30 15:33:35.273484",
  "modified_by": "Administrator",
  "module": "PMS",
  "name": "performance-trends",
  "owner": "Administrator",
  "page_name": "performance-trends",
- "roles": [],
+ "roles": [
+  {
+   "role": "System Manager"
+  }
+ ],
  "script": null,
  "standard": "Yes",
  "style": null,

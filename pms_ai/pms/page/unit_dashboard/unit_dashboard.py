@@ -4,7 +4,7 @@ import json
 
 
 @frappe.whitelist()
-def get_goals_competency(appraisal_names):
+def get_goals_competency(appraisal_names,units=[]):
     """
     Fetch custom_self_score and custom_assessor_score from the
     Appraisal Goal child table for a list of appraisal names.
@@ -25,17 +25,37 @@ def get_goals_competency(appraisal_names):
     # Use frappe.db.sql for reliability with custom fields on child tables
     placeholders = ", ".join(["%s"] * len(names))
     rows = frappe.db.sql(f"""
-        SELECT
-            ag.parent,
-            ag.kra,
-            ag.per_weightage,
-            ag.custom_self_score,
-            ag.custom_assessor_score,
-            ag.custom_unit
-        FROM `tabAppraisal Goal` ag
-        WHERE ag.parent IN ({placeholders})
-        ORDER BY ag.parent, ag.idx
-    """, tuple(names), as_dict=True)
+    SELECT
+        ag.parent,
+        e.employment_type,
+        e.name as employee,
+        e.employee_name,
+        ag.kra,
+        ag.per_weightage,
+        ag.custom_self_score,
+        ag.custom_self_score_with_weighted,
+        ag.score,
+        ag.custom_assessor_score,
+        e.custom_unit
+    FROM `tabAppraisal Goal` ag
+    INNER JOIN `tabAppraisal` a
+        ON a.name = ag.parent
+    INNER JOIN `tabEmployee` e
+        ON e.name = a.employee
+    WHERE ag.parent IN ({placeholders})
+      AND a.workflow_state IN ('Approved', 'Accepted')
+    ORDER BY
+        CASE UPPER(TRIM(ag.kra))
+            WHEN 'SAFETY' THEN 1
+            WHEN 'INTEGRITY' THEN 2
+            WHEN 'QUALITY' THEN 3
+            WHEN 'SIMPLICITY' THEN 4
+            WHEN 'RESPECT' THEN 5
+            WHEN 'CONTINUOUS IMPROVEMENT' THEN 6
+            ELSE 999
+        END,
+        ag.kra
+""", tuple(names), as_dict=True)
 
     return rows
 

@@ -1,8 +1,205 @@
 frappe.pages['staff-dashboard'].on_page_load = function(wrapper) {
-	const STAFF_EXCLUDE_GRADES = ['A1','A2','A3','A4'];
+    let WORKER_GRADES = ['A1', 'A2', 'A3', 'A4'];
+    const dataLabelPlugin = {
+    id: 'dataLabelPlugin',
+    afterDatasetsDraw(chart) {
+        const { ctx, chartArea } = chart;
+        if (!chartArea) return;
+
+        const isStackedY = chart.config.options?.scales?.y?.stacked === true;
+        const isStackedX = chart.config.options?.scales?.x?.stacked === true;
+        const isStacked  = isStackedY || isStackedX;
+        const isHoriz    = chart.config.options?.indexAxis === 'y';
+        const chartType  = chart.config.type;
+
+        function resolveColor(ds, idx) {
+            let c = Array.isArray(ds.backgroundColor)
+                ? ds.backgroundColor[idx]
+                : ds.backgroundColor;
+            if (!c || c === 'transparent' || (typeof c === 'string' && c.startsWith('rgba'))) {
+                c = Array.isArray(ds.borderColor) ? ds.borderColor[idx] : ds.borderColor;
+            }
+            return c || '#333';
+        }
+
+        function contrastText(bg) {
+            if (!bg) return '#333';
+            let r = 0, g = 0, b = 0;
+            if (bg.startsWith('#')) {
+                let hex = bg.replace('#', '');
+                if (hex.length === 3) hex = hex.split('').map(x => x + x).join('');
+                r = parseInt(hex.substring(0, 2), 16);
+                g = parseInt(hex.substring(2, 4), 16);
+                b = parseInt(hex.substring(4, 6), 16);
+            } else if (bg.startsWith('rgb')) {
+                let m = bg.match(/[\d.]+/g) || [];
+                r = +m[0] || 0; g = +m[1] || 0; b = +m[2] || 0;
+            }
+            return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.55 ? '#333333' : '#ffffff';
+        }
+
+        chart.data.datasets.forEach((ds, di) => {
+            const meta = chart.getDatasetMeta(di);
+            if (meta.hidden) return;
+
+            // ── skip the line type="line" reference datasets (e.g. population avg lines) ──
+            const isReferenceLine = ds.pointRadius === 0 && ds.borderDash && ds.borderDash.length > 0;
+
+            meta.data.forEach((bar, idx) => {
+                const raw = ds.data[idx];
+                if (raw === null || raw === undefined || raw === '') return;
+                if (typeof raw === 'object' && !Array.isArray(raw)) return;
+
+                const numVal = parseFloat(raw);
+                if (isNaN(numVal)) return;
+
+                // ── Doughnut / pie ──────────────────────────────────────────
+                if (chartType === 'doughnut' || chartType === 'pie') {
+                    const total = ds.data.reduce((a, b) => (parseFloat(b) || 0) + (a || 0), 0);
+                    const pct   = total ? Math.round((numVal / total) * 100) : 0;
+                    if (pct < 5) return;
+                    const angle = (bar.startAngle + bar.endAngle) / 2;
+                    const r2    = (bar.innerRadius + bar.outerRadius) / 2;
+                    const lx    = bar.x + Math.cos(angle) * r2;
+                    const ly    = bar.y + Math.sin(angle) * r2;
+                    const elColor = resolveColor(ds, idx);
+                    ctx.save();
+                    ctx.font         = 'bold 9px Inter, sans-serif';
+                    ctx.fillStyle    = contrastText(elColor);
+                    ctx.textAlign    = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(`${numVal} (${pct}%)`, lx, ly);
+                    ctx.restore();
+                    return;
+                }
+
+                // ── Line chart ──────────────────────────────────────────────
+                if (chartType === 'line') {
+                    if (isReferenceLine) return;
+                    if (Math.abs(numVal) < 0.001) return;
+
+                    const { x, y } = bar.getProps(['x', 'y'], true);
+                    const lineColor = (typeof ds.borderColor === 'string' && ds.borderColor)
+                        ? ds.borderColor
+                        : '#333';
+
+                    const displayVal = Number.isInteger(numVal)
+                        ? String(numVal)
+                        : numVal.toFixed(2);
+
+                    ctx.save();
+                    ctx.font = 'bold 10px Inter, sans-serif';
+
+                    // ── pill background for readability ──
+                    const metrics  = ctx.measureText(displayVal);
+                    const padX     = 5, padY = 3;
+                    const bw       = metrics.width + padX * 2;
+                    const bh       = 14;
+                    const bx       = x - bw / 2;
+                    const by       = y - bh - 6;   // sit just above the point
+
+                    // subtle tinted pill
+                    ctx.fillStyle   = lineColor;
+                    ctx.globalAlpha = 0.13;
+                    ctx.beginPath();
+                    
+                    ctx.fill();
+
+                    // label text in the dataset line color
+                    ctx.globalAlpha  = 1;
+                    ctx.fillStyle    = lineColor;
+                    ctx.textAlign    = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(displayVal, x, by + bh / 2);
+
+                    ctx.restore();
+                    return;
+                }
+
+                // ── Stacked bar ─────────────────────────────────────────────
+                if (isStacked && (chartType === 'bar' || chartType === 'horizontalBar')) {
+                    if (!numVal || Math.abs(numVal) < 0.001) return;
+                    const segHeight = Math.abs(bar.base - bar.y);
+                    const segWidth  = Math.abs(bar.base - bar.x);
+                    const tooSmall  = isHoriz ? segWidth < 20 : segHeight < 14;
+                    // if (tooSmall) return;
+
+                    const segMidY  = isHoriz ? bar.y : (bar.base + bar.y) / 2;
+                    const segMidX  = isHoriz ? (bar.base + bar.x) / 2 : bar.x;
+                    const elColor  = resolveColor(ds, idx);
+                    const txtColor = contrastText(elColor);
+
+                    ctx.save();
+                    ctx.font         = 'bold 10px Inter, sans-serif';
+                    ctx.fillStyle    = txtColor;
+                    ctx.textAlign    = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(numVal, segMidX, segMidY);
+                    ctx.restore();
+                    return;
+                }
+
+                // ── Non-stacked bar ─────────────────────────────────────────
+               // ── Non-stacked bar ─────────────────────────────────────────
+if (!isStacked && (chartType === 'bar' || chartType === 'horizontalBar')) {
+    if (!numVal || Math.abs(numVal) < 0.001) return;
+
+    const elColor = Array.isArray(ds.backgroundColor)
+        ? ds.backgroundColor[idx]
+        : ds.backgroundColor;
+
+    const labelColor = (typeof elColor === 'string' && elColor !== 'transparent' && !elColor.startsWith('rgba'))
+        ? elColor
+        : (typeof ds.borderColor === 'string' ? ds.borderColor : '#333');
+
+    ctx.save();
+    ctx.font      = 'bold 10px Inter, sans-serif';
+    ctx.fillStyle = labelColor;
+
+    if (isHoriz) {
+        const barEnd = bar.x;   // rightmost pixel of the bar
+        const barW   = Math.abs(bar.x - bar.base);
+
+        if (barW < 30) {
+            // bar too short — label to the RIGHT of bar end
+            ctx.textAlign    = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(numVal + '%', barEnd + 5, bar.y);
+        } else {
+            // label INSIDE bar, centered horizontally
+            ctx.textAlign    = 'center';
+            ctx.textBaseline = 'middle';
+            // use white text inside colored bar for readability
+            function contrastForBar(hex) {
+                if (!hex) return '#fff';
+                let h = hex.replace('#','');
+                if (h.length === 3) h = h.split('').map(x=>x+x).join('');
+                let r = parseInt(h.substring(0,2),16)||0;
+                let g = parseInt(h.substring(2,4),16)||0;
+                let b = parseInt(h.substring(4,6),16)||0;
+                return (0.299*r + 0.587*g + 0.114*b)/255 > 0.55 ? '#333333' : '#ffffff';
+            }
+            ctx.fillStyle = contrastForBar(elColor);
+            ctx.fillText(numVal + '%', bar.base + barW / 2, bar.y);
+        }
+    } else {
+        // vertical bar — label above
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle    = labelColor;
+        ctx.fillText(numVal, bar.x, bar.y - 2);
+    }
+
+    ctx.restore();
+    return;
+}
+            });
+        });
+    }
+};
     let page = frappe.ui.make_app_page({
         parent: wrapper,
-        title: 'Staff Appraisal Dashboard',
+        title: 'Unit Appraisal Dashboard',
         single_column: true,
         make_sidebar: null
     });
@@ -11,6 +208,86 @@ frappe.pages['staff-dashboard'].on_page_load = function(wrapper) {
         export_pdf();
     });
     $('head').append(`<style id="ud-promo-styles">
+    .ai-insight-card {
+        background-color: #f8f9fa;
+        border: 1px solid #e2e5ec;
+        border-left: 4px solid #2e86c1;
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 4px 18px rgba(0,0,0,0.04);
+        margin: 15px;
+
+    }
+
+    .ai-header {
+        padding: 18px 22px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #edf2f7;
+    }
+
+    .ai-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .ai-icon {
+        width: 38px;
+        height: 38px;
+        background: #eff6ff;
+        border-radius: 12px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+    }
+
+    .ai-header h4 {
+        margin: 0;
+        color:#2e86c1;
+        font-size:18px;
+        font-weight:600;
+    }
+
+    .ai-header p {
+        margin:4px 0 0;
+        color:#64748b;
+        font-size:13px;
+    }
+
+    #btn-ai-distribution {
+        background:#111827;
+        color:white;
+        border:none;
+        padding:5px 10px;
+        border-radius:10px;
+        cursor:pointer;
+        font-weight:600;
+    }
+
+    .ai-body {
+        padding-left:25px;
+        padding-right: 25px;
+        padding-top: 15px;
+        padding-bottom: 15px;
+    }
+
+    .empty-state {
+        text-align:center;
+        color:#64748b;
+    }
+
+    .empty-icon {
+        font-size:34px;
+        margin-bottom:10px;
+    }
+
+    .empty-state h4 {
+        color:#334155;
+        margin-bottom:6px;
+    }
+    .ai-card-header { display: flex;}
     .ud-promo-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:16px; }
     .ud-promo-kpi  { background:#fff; border-radius:8px; padding:12px 14px; text-align:center;
                      border-top:3px solid #dee2e6; box-shadow:0 1px 6px rgba(0,0,0,.05); }
@@ -20,6 +297,7 @@ frappe.pages['staff-dashboard'].on_page_load = function(wrapper) {
     .ud-promo-kpi.pp-gold   { border-top-color:#f4a100; } .ud-promo-kpi.pp-gold   .pkv2 { color:#f4a100; }
     .ud-promo-kpi.pp-navy   { border-top-color:#0f1f3d; } .ud-promo-kpi.pp-navy   .pkv2 { color:#0f1f3d; }
     .ud-promo-kpi.pp-green  { border-top-color:#28a745; } .ud-promo-kpi.pp-green  .pkv2 { color:#28a745; }
+    .ud-promo-kpi.pp-orange  { border-top-color:#ff922b; } .ud-promo-kpi.pp-orange  .pkv2 { color:#ff922b; }
     .ud-promo-kpi.pp-red    { border-top-color:#C8102E; } .ud-promo-kpi.pp-red    .pkv2 { color:#C8102E; }
     .ud-promo-kpi.pp-purple { border-top-color:#7b1fa2; } .ud-promo-kpi.pp-purple .pkv2 { color:#7b1fa2; }
     .ud-promo-kpi.pp-teal   { border-top-color:#00796b; } .ud-promo-kpi.pp-teal   .pkv2 { color:#00796b; }
@@ -87,18 +365,20 @@ frappe.pages['staff-dashboard'].on_page_load = function(wrapper) {
     .ud-perf-panel.active { display:block; }
  
     .ud-perf-kpi-row {
-        display:grid; grid-template-columns:repeat(5,1fr);
+        display:grid; grid-template-columns:repeat(6,1fr);
         gap:10px; margin-bottom:16px;
     }
     .ud-perf-kpi {
         background:#fff; border-radius:8px; padding:12px 14px; text-align:center;
         border-top:3px solid #dee2e6; box-shadow:0 1px 6px rgba(0,0,0,.05);
     }
-    .ud-perf-kpi.gold   { border-top-color:#f4a100; } .ud-perf-kpi.gold   .pkv { color:#f4a100; }
-    .ud-perf-kpi.navy   { border-top-color:#0f1f3d; } .ud-perf-kpi.navy   .pkv { color:#0f1f3d; }
-    .ud-perf-kpi.red    { border-top-color:#C8102E; } .ud-perf-kpi.red    .pkv { color:#C8102E; }
-    .ud-perf-kpi.green  { border-top-color:#28a745; } .ud-perf-kpi.green  .pkv { color:#28a745; }
-    .ud-perf-kpi.purple { border-top-color:#7b1fa2; } .ud-perf-kpi.purple .pkv { color:#7b1fa2; }
+    .ud-perf-kpi.gold   { border-top-color:#28a745 ; } .ud-perf-kpi.gold   .pkv { color:#28a745 ; }
+    .ud-perf-kpi.navy   { border-top-color:#AED581 ; } .ud-perf-kpi.navy   .pkv { color:#AED581 ; }
+    .ud-perf-kpi.red    { border-top-color:#ffc107 ; } .ud-perf-kpi.red    .pkv { color:#ffc107 ; }
+    .ud-perf-kpi.yellow    { border-top-color:#FFEE58 ; } .ud-perf-kpi.red    .pkv { color:#FFEE58 ; }
+    .ud-perf-kpi.orange    { border-top-color:#FFEE58 ; } .ud-perf-kpi.orange    .pkv { color:#FFEE58 ; }
+    .ud-perf-kpi.green  { border-top-color:#7b1fa2; } .ud-perf-kpi.green  .pkv { color:#7b1fa2; }
+    .ud-perf-kpi.purple { border-top-color:#C8102E; } .ud-perf-kpi.purple .pkv { color:#C8102E; }
     .pkv { font-size:22px; font-weight:700; line-height:1.1; color:#0f1f3d; }
     .pkl { font-size:10px; font-weight:600; color:#868e96; text-transform:uppercase; letter-spacing:1px; margin-top:3px; }
  
@@ -206,12 +486,12 @@ frappe.pages['staff-dashboard'].on_page_load = function(wrapper) {
         .ud-kpi-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.1); }
         .ud-kpi-card .kpi-val { font-size: 26px; font-weight: 700; color: #0f1f3d; line-height: 1.1; }
         .ud-kpi-card .kpi-lbl { font-size: 10px; font-weight: 600; color: #868e96; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
-        .ud-kpi-card.blue   { border-top-color: #C8102E; } .ud-kpi-card.blue   .kpi-val { color: #C8102E; }
+        .ud-kpi-card.blue   { border-top-color: #331bab ; } .ud-kpi-card.blue   .kpi-val { color: #331bab ; }
         .ud-kpi-card.green  { border-top-color: #28a745; } .ud-kpi-card.green  .kpi-val { color: #28a745; }
         .ud-kpi-card.orange { border-top-color: #ffc107; } .ud-kpi-card.orange .kpi-val { color: #e6a800; }
-        .ud-kpi-card.red    { border-top-color: #e53935; } .ud-kpi-card.red    .kpi-val { color: #e53935; }
-        .ud-kpi-card.purple { border-top-color: #7b1fa2; } .ud-kpi-card.purple .kpi-val { color: #7b1fa2; }
-        .ud-kpi-card.teal   { border-top-color: #00796b; } .ud-kpi-card.teal   .kpi-val { color: #00796b; }
+        .ud-kpi-card.red    { border-top-color: #C8102E; } .ud-kpi-card.red    .kpi-val { color: #C8102E; }
+        .ud-kpi-card.purple { border-top-color: #128325; } .ud-kpi-card.purple .kpi-val { color: #128325; }
+        .ud-kpi-card.teal   { border-top-color: #f2302c; } .ud-kpi-card.teal   .kpi-val { color: #f2302c; }
 
         /* IMPORTANT: Remove overflow:hidden — it clips content in print */
         .ud-section { background: #fff; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.06); margin-bottom: 18px; }
@@ -502,6 +782,7 @@ frappe.pages['staff-dashboard'].on_page_load = function(wrapper) {
 .nkc-green {border-top-color:#28a745;} .nkc-green .nkv{color:#28a745;}
 .nkc-teal  {border-top-color:#00796b;} .nkc-teal  .nkv{color:#00796b;}
 .nkc-purple{border-top-color:#7b1fa2;} .nkc-purple .nkv{color:#7b1fa2;}
+.nkc-yellow{border-top-color:#FFEE58 ;} .nkc-yellow .nkv{color:#FFEE58 ;}
 
 /* ── Shared tab bar ── */
 .ud-ns-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
@@ -570,7 +851,7 @@ frappe.pages['staff-dashboard'].on_page_load = function(wrapper) {
         <div class="ud-wrap" style="padding:16px;">
             <div class="ud-print-header">
                 <div class="ud-title-block">
-                    <div class="ud-title">Staff Appraisal Dashboard</div>
+                    <div class="ud-title">Unit Appraisal Dashboard</div>
                     <div class="ud-subtitle"></div>
                 </div>
                 <div class="ud-print-logo" style="font-size:11px;color:#C8102E;font-weight:700;">GALFAR</div>
@@ -580,10 +861,23 @@ frappe.pages['staff-dashboard'].on_page_load = function(wrapper) {
                 <div class="ud-loading"><span class="spinner-border spinner-border-sm"></span> Loading units...</div>
             </div>
             <div id="ud-main"></div>
-            <div class="ud-footer">Staff Appraisal Dashboard | Confidential</div>
+            <div class="ud-footer">Unit Appraisal Dashboard | Confidential</div>
         </div>
     `);
+$('head').append(`<style id="ud-report-filter-styles">
+    /* Make report type filter stand out slightly */
+    .ud-filter-bar .frappe-control[data-fieldname="report_type"] .form-control {
+        border-color: #C8102E;
+        font-weight: 600;
+        color: #0f1f3d;
+    }
+    
 
+    /* Smooth show/hide */
+    .ud-section {
+        transition: opacity 0.2s ease;
+    }
+</style>`);
     let $page          = $(page.body);
     let chartInstances = {};
     let currentUnit    = '__ALL__';
@@ -654,7 +948,7 @@ function export_pdf() {
         let originalTitle = document.title;
         document.title = `Unit Dashboard - ${unit} - ${date}`;
 
-
+        
         // STEP 5: Give browser time to reflow, then print
         setTimeout(() => {
             // Add this BEFORE window.print()
@@ -781,9 +1075,55 @@ function export_pdf() {
             df: { label: 'To Date', fieldtype: 'Date', fieldname: 'to_date', change: () => debounced_reload() },
             parent: $page.find('#ud-filters'), render_input: true
         });
+        // After to_field is created:
+        let grade_filter_field = frappe.ui.form.make_control({
+            df: {
+                label: 'Employee Type',
+                fieldtype: 'Select',
+                fieldname: 'grade_filter',
+                options: '\nAll\nWorker (A1–A4)\nStaff (B1-B5)\nStaff (C1-C3)\nStaff (D1-E2)',
+                change: () => debounced_reload()
+            },
+            parent: $page.find('#ud-filters'),
+            render_input: true
+        });
+        grade_filter_field.set_value('All', true);
+
+        
+        
+
 
         from_field.set_value(frappe.datetime.month_start(), true);
         to_field.set_value(frappe.datetime.month_end(), true);
+        let report_type_field = frappe.ui.form.make_control({
+        df: {
+            label: 'Report Type',
+            fieldtype: 'Select',
+            fieldname: 'report_type',
+            options: [
+                '',
+                'Overview',
+                'Bell Curve Distribution',
+                'Performance Tracker',
+                '9-Box Talent Matrix',
+                'Competency Analysis',
+                'Historical Performance',
+                'Average Rating',
+                'Appraisal Aging',
+                'Assessor Effectiveness',
+                'Calibration Summary',
+                'Compliance Dashboard',
+                'Performance vs Compensation',
+                'Promotion Eligibility',
+                'Succession Readiness',
+                'Learning & Development'
+            ].join('\n'),
+            change: () => apply_report_type_filter()
+        },
+        parent: $page.find('#ud-filters'),
+        render_input: true
+    });
+    report_type_field.set_value('', true);
         initializing = false;
 
         function debounced_reload() {
@@ -791,16 +1131,300 @@ function export_pdf() {
             clearTimeout(reload_timer);
             reload_timer = setTimeout(() => load_unit_dashboard(currentUnit), 300);
         }
+        function apply_report_type_filter() {
+    let selected = report_type_field.get_value() || '';
+
+    // Map each report type to its section selector
+    // Each section has a unique child element we can target
+    const sectionMap = {
+        'Overview':                  ['#ud-card-total',         '.ud-kpi-row'],
+        'Bell Curve Distribution':   ['#ud-body-bell',          '#ud-bell-panel-combined'],
+        'Performance Tracker':       ['#ud-body-performers',    '#udp-all'],
+        '9-Box Talent Matrix':       ['#ud-body-ninebox',       '#ud-9box-detail-panel'],
+        'Competency Analysis':       ['#ud-body-comp',          '#ud-comp-content'],
+        'Historical Performance':    ['#ud-body-hist',          '#ud-hist-content'],
+        'Average Rating':            ['#ud-body-avgrating',     '#udar-unit'],
+        'Appraisal Aging':           ['#ud-body-aging',         '#udag-emp'],
+        'Assessor Effectiveness':    ['#ud-body-aeff2',         '#udae2-overview'],
+        'Calibration Summary':       ['#ud-body-calibration',   '#ud-calib-scatter'],
+        'Compliance Dashboard':      ['#ud-body-compliance',    '#ud-compliance-bar'],
+        'Performance vs Compensation': ['#ud-body-perfcomp',   '#ud-pvc-dist-bar'],
+        'Promotion Eligibility':     ['#ud-body-promo',         '#udpp-elig'],
+        'Succession Readiness':      ['#ud-body-succ',          '#ud-succ-pipeline'],
+        'Learning & Development':    ['#ud-body-ld',            '#ud-ld-body'],
+    };
+
+    // All top-level ud-section divs
+    let $allSections = $page.find('#ud-main .ud-section');
+    // KPI row is outside sections
+    let $kpiRow = $page.find('#ud-main .ud-kpi-row');
+
+    if (!selected) {
+        // Show everything
+        $allSections.show();
+        $kpiRow.show();
+        return;
+    }
+
+    if (selected === 'Overview') {
+        $allSections.hide();
+        $kpiRow.show();
+        // Also show completion section (first section)
+        $page.find('#ud-body-completion').closest('.ud-section').show();
+        return;
+    }
+
+    // Hide KPI row for non-overview reports
+    $kpiRow.hide();
+    $allSections.hide();
+
+    // Find and show matching section
+    let targets = sectionMap[selected];
+    if (targets && targets.length) {
+        // Use first selector to find the section
+        let $target = $page.find(targets[0]);
+        if ($target.length) {
+            // Walk up to the nearest ud-section
+            let $section = $target.closest('.ud-section');
+            if (!$section.length) {
+                // target IS inside section body — find parent section
+                $section = $target.parents('.ud-section').first();
+            }
+            if ($section.length) {
+                $section.show();
+                // Ensure section body is expanded
+                $section.find('.ud-collapsible-body').show();
+                $section.find('.ud-toggle-icon').text('▼');
+            }
+        }
+
+        // Also show by second selector as fallback
+        if (targets[1]) {
+            let $target2 = $page.find(targets[1]);
+            if ($target2.length) {
+                $target2.closest('.ud-section').show();
+                $target2.closest('.ud-collapsible-body').show();
+            }
+        }
+    }
+}
+
+        // ── AI Insight Fetcher ─────────────────────────────
+        function fetch_ai_insights(btn_element, content_id, context_type, chart_data) {
+            let $btn = $(btn_element);
+            let $content = $page.find(`#${content_id}`);
+
+            $btn.prop("disabled", true).html("✨ Analyzing...");
+            $content.html(`
+                <span class="spinner-border spinner-border-sm text-primary"></span>
+                Analyzing...
+            `);
+
+            frappe.call({
+                method: "pms_ai.api.analyze_dashboard_chart",
+                args: {
+                    chart_context: context_type,
+                    chart_data: JSON.stringify(chart_data)
+                },
+                callback: function(r) {
+                    $btn.prop("disabled", false)
+                        .html("🔄 Refresh Insight");
+
+                    if (r.message) {
+                        $content.html(
+                            r.message.replace(/\n/g, "<br>")
+                        );
+                    }
+                }
+            });
+        }
+
+        $(document)
+        .off('click', '#btn-ai-competency')
+        .on('click', '#btn-ai-competency', function () {
+
+            console.log("Button Clicked");
+
+            fetch_ai_insights(
+                this,
+                'ai-content-competency',
+                'unit_competency_insight',
+                window.competencyInsightData || []
+            );
+        });
+
+        $(document)
+        .off('click', '#btn-ai-competency-gap')
+        .on('click', '#btn-ai-competency-gap', function () {
+
+            console.log(competencyGapInsightData);
+
+            fetch_ai_insights(
+                this,
+                'ai-content-competency-gap',
+                'unit_competency_gap_insight',
+                competencyGapInsightData
+            );
+        });
+
+        $(document)
+        .off('click', '#btn-ai-historical-performance')
+        .on('click', '#btn-ai-historical-performance', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-historical-performance',
+                'unit_historical_performance',
+                historicalPerformanceData
+            );
+        });
+        $(document)
+        .off('click', '#btn-ai-assessor-effectiveness')
+        .on('click', '#btn-ai-assessor-effectiveness', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-assessor-effectiveness',
+                'unit_assessor_effectiveness',
+                window.assessorEffectivenessData
+            );
+        });
+        // learning & development
+        $(document)
+        .off('click', '#btn-ai-learning-development')
+        .on('click', '#btn-ai-learning-development', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-learning-development',
+                'unit_learning_development',
+                window.learningDevelopmentData || {}
+            );
+        });
+        // promotion eligibilty
+        $(document)
+        .off('click', '#btn-ai-promotion-eligibility')
+        .on('click', '#btn-ai-promotion-eligibility', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-promotion-eligibility',
+                'unit_promotion_eligibility',
+                window.promotionEligibilityData || {}
+            );
+        });
+        // individual increment
+        $(document)
+        .off('click', '#btn-ai-individual-increment')
+        .on('click', '#btn-ai-individual-increment', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-individual-increment',
+                'unit_individual_increment',
+                window.individualIncrementData || {}
+            );
+        });
+        // pay-for-performance
+        $(document)
+        .off('click', '#btn-ai-pay-for-performance')
+        .on('click', '#btn-ai-pay-for-performance', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-pay-for-performance',
+                'unit_pay_for_performance',
+                window.payForPerformanceData || []
+            );
+        });
+        // policy deviation
+        $(document)
+        .off('click', '#btn-ai-policy-deviation')
+        .on('click', '#btn-ai-policy-deviation', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-policy-deviation',
+                'unit_policy_deviation',
+                window.policyDeviationData  || []
+            );
+        });
+        // compliance data
+        $(document)
+        .off('click', '#btn-ai-compliance-status')
+        .on('click', '#btn-ai-compliance-status', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-compliance-status',
+                'unit_compliance_status',
+                window.policyComplianceData  || []
+            );
+        });
+        // shift calibration
+        $(document)
+        .off('click', '#btn-ai-shift-calibration')
+        .on('click', '#btn-ai-shift-calibration', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-shift-calibration',
+                'unit_shift_calibration',
+                window.calibrationIndividualData  || []
+            );
+        });
+        // calibration data
+        $(document)
+        .off('click', '#btn-ai-calibration')
+        .on('click', '#btn-ai-calibration', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-calibration',
+                'unit_compliance_status',
+                window.calibrationData  || []
+            );
+        });
+        // 9-box data
+        $(document)
+        .off('click', '#btn-ai-9-box')
+        .on('click', '#btn-ai-9-box', function () {
+            fetch_ai_insights(
+                this,
+                'ai-content-9-box',
+                'unit_9_box',
+                window.ud_9BoxData  || []
+            );
+        });
+        
+        $(document)
+        .off('click', '#btn-ai-self-assessor-bar')
+        .on('click', '#btn-ai-self-assessor-bar', function () {
+            fetch_ai_insights(
+                this,
+                'ai-content-self-assessor-bar',
+                'unit_self_assessor_bar',
+                window.competencyChartData || []
+            );
+        });
+
+        $(document)
+        .off('click', '#btn-ai-competency-radar')
+        .on('click', '#btn-ai-competency-radar', function () {
+            fetch_ai_insights(
+                this,
+                'ai-content-competency-radar',
+                'unit_competency_radar',
+                window.competencyChartData || []
+            );
+        });
 
         frappe.call({
             method: 'frappe.client.get_list',
             args: {
                 doctype: 'Appraisal',
                 fields:  ['custom_unit'],
-                filters: [
-                    ['docstatus', 'in', [0, 1]],
-                    ['custom_grade', 'not in', STAFF_EXCLUDE_GRADES]
-                ],
+                filters: [['docstatus', 'in', [0, 1]]],
                 limit_page_length: 1000,
                 group_by: 'custom_unit'
             },
@@ -849,15 +1473,31 @@ function export_pdf() {
 
             Object.values(chartInstances).forEach(c => { try { c.destroy(); } catch(e){} });
             chartInstances = {};
-
+            let gradeFilter = grade_filter_field.get_value() || 'All';
             let period = getHalfYearPeriod();
             let filters = [
                 ['docstatus', 'in', [0, 1]],
-                ['start_date', 'between', [period.start_date, period.end_date]],
-                ['custom_grade', 'not in', STAFF_EXCLUDE_GRADES]
+                ['start_date', 'between', [period.start_date, period.end_date]]
             ];
             if (unit !== '__ALL__') filters.push(['custom_unit', '=', unit]);
+            
+            // if (gradeFilter === 'Worker (A1–A4)') {
+            //     filters.push(['custom_grade', 'in', WORKER_GRADES]);
+            // } else if (gradeFilter === 'Staff') {
+            //     filters.push(['custom_grade', 'not in', WORKER_GRADES]);
+            // }
+            if (gradeFilter === 'Worker (A1–A4)') {
+                filters.push(['custom_grade', 'in', ['A1', 'A2', 'A3', 'A4']]);
 
+            } else if (gradeFilter === 'Staff (B1-B5)') {
+                filters.push(['custom_grade', 'in', ['B1', 'B2', 'B3', 'B4', 'B5']]);
+
+            } else if (gradeFilter === 'Staff (C1-C3)') {
+                filters.push(['custom_grade', 'in', ['C1', 'C2', 'C3']]);
+
+            } else if (gradeFilter === 'Staff (D1-E2)') {
+                filters.push(['custom_grade', 'in', ['D1', 'D2', 'D3', 'E1', 'E2']]);
+            }
             frappe.call({
                 method: 'frappe.client.get_list',
                 args: {
@@ -869,7 +1509,7 @@ function export_pdf() {
                         'custom_total_self_score', 'final_score',
                         'docstatus', 'start_date', 'modified',
                         'appraisal_cycle', 'appraisal_template',
-                        'custom_submitted_date', 'custom_self_approval_date', 'workflow_state','custom_appraisal_status'
+                        'custom_submitted_date', 'custom_self_approval_date', 'workflow_state','custom_appraisal_status','custom_rollout_date'
                     ],
                     filters: filters,
                     limit_page_length: 2000
@@ -877,17 +1517,38 @@ function export_pdf() {
                 callback: function(r) { render_dashboard(r.message || [], unit); }
             });
         }
+        // ── Place this BEFORE load_unit_dashboard is called, at top of init() ──
+window.ud_thEye = function(label, desc, formula, example) {
+    let safe = (label||'').replace(/'/g, "\\'");
+    let d    = (desc||'').replace(/'/g, "\\'");
+    let f    = (formula||'').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+    let ex   = example ? (example).replace(/'/g, "\\'") : '';
+    return `<button
+        onclick="event.stopPropagation(); ud_showColInfo('${safe}','${d}','${f}','${ex}')"
+        title="View formula for ${safe}"
+        aria-label="View formula for ${safe}"
+        style="background:none;border:none;padding:0;margin-left:5px;cursor:pointer;
+               opacity:0.55;vertical-align:middle;line-height:1;display:inline-flex;
+               align-items:center;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="8"/>
+            <line x1="12" y1="12" x2="12" y2="16"/>
+        </svg>
+    </button>`;
+};
 
         _load_unit_dashboard = load_unit_dashboard;
 
         // ── render_dashboard ───────────────────────────────────────────────────
         function render_dashboard(data, unit) {
 
-            const WORKER_GRADES   = ['A1','A2','A3','A4'];
             const isWorker        = g => WORKER_GRADES.includes((g||''));
             const BELL_LABELS     = ['E (Poor)','D (Acceptable)','C (Good)','B (Very Good)','A (Excellent)'];
             const BELL_TARGET_PCT = [0.05, 0.15, 0.50, 0.20, 0.10];
-            const BELL_COLORS     = ['#e53935','#ffa726','#66bb6a','#42a5f5','#C8102E'];
+            const BELL_COLORS     = ['#ED2D1E','#D97706','#F1D548','#9AC654','#4C8C32'];
 
             function bellBucket(s) {
                 let v = parseFloat(s) || 0;
@@ -921,8 +1582,8 @@ function export_pdf() {
             let overdue    = data.filter(d => d.custom_appraisal_status == 'Overdue').length;
             let scored    = data.filter(d => parseFloat(d.total_score) > 0);
             let avgScore  = scored.length ? (scored.reduce((s,d) => s + parseFloat(d.total_score), 0) / scored.length).toFixed(2) : 'N/A';
-            let topPerf   = scored.filter(d => parseFloat(d.total_score) > 3.5).length;
-            let lowPerf   = scored.filter(d => parseFloat(d.total_score) < 2.5).length;
+            let topPerf   = data.filter(d => parseFloat(d.total_score) > 3.5 && ['Approved','Accepted'].includes(d.workflow_state)).length;
+            let lowPerf   = data.filter(d => parseFloat(d.total_score) < 2.5 && ['Approved','Accepted'].includes(d.workflow_state)).length;
 
             let unitMap = {};
             data.forEach(d => {
@@ -973,38 +1634,143 @@ function export_pdf() {
                 let dep = d.custom_unit || 'Unknown';
                 if (!deptMap[dep]) deptMap[dep] = { total:0, completed:0,overdue:0 };
                 deptMap[dep].total++;
-                if (d.docstatus === 1) deptMap[dep].completed++;
+                if (d.docstatus === 1 && ['Approved','Accepted'].includes(d.workflow_state)) deptMap[dep].completed++;
                 if (d.custom_appraisal_status == "Overdue") deptMap[dep].overdue++;
             });
+            
+let ud_thEye = window.ud_thEye;   // reuse the global
+window.ud_showColInfo = function(label, desc, formula, example) {
+    formula = formula.replace(/\\n/g, '\n');
 
+    if (!document.getElementById('ud-col-info-overlay')) {
+        $('body').append(`
+        <div id="ud-col-info-overlay"
+             style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;
+                    background:rgba(15,31,61,0.48);z-index:99999;
+                    align-items:center;justify-content:center;">
+            <div id="ud-col-info-modal"
+                 style="background:#fff;border-radius:10px;max-width:460px;width:92%;
+                        overflow:hidden;box-shadow:0 8px 32px rgba(15,31,61,0.2);"
+                 onclick="event.stopPropagation()">
+                <div style="background:#0f1f3d;color:#fff;padding:13px 16px;
+                            display:flex;justify-content:space-between;align-items:center;">
+                    <span id="ud-ci-title"
+                          style="font-size:13px;font-weight:700;"></span>
+                    <button onclick="document.getElementById('ud-col-info-overlay').style.display='none'"
+                            style="background:none;border:none;color:#fff;cursor:pointer;
+                                   font-size:20px;line-height:1;opacity:.7;padding:0;">
+                        &times;
+                    </button>
+                </div>
+                <div style="padding:18px 20px;">
+                    <div style="font-size:10px;font-weight:700;color:#868e96;
+                                text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">
+                        Description
+                    </div>
+                    <div id="ud-ci-desc"
+                         style="font-size:13px;color:#0f1f3d;line-height:1.65;margin-bottom:14px;">
+                    </div>
+                    <div style="font-size:10px;font-weight:700;color:#868e96;
+                                text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">
+                        Formula / Logic
+                    </div>
+                    <pre id="ud-ci-formula"
+                         style="background:#f0f4ff;border-left:3px solid #0f1f3d;
+                                border-radius:0 6px 6px 0;padding:10px 14px;
+                                font-size:12px;color:#0f1f3d;font-family:monospace;
+                                line-height:1.7;margin:0;white-space:pre-wrap;"></pre>
+                    <pre id="ud-ci-example"
+                         style="background:#fff8e1;border-left:3px solid #f4a100;
+                                border-radius:0 6px 6px 0;padding:9px 14px;
+                                font-size:12px;color:#7a4f00;margin-top:10px;
+                                line-height:1.6;white-space:pre-wrap;display:none;"></pre>
+                </div>
+            </div>
+        </div>`);
+
+        $('#ud-col-info-overlay').on('click', function(e) {
+            if (e.target === this) $(this).hide();
+        });
+
+        $(document).on('keydown.udColInfo', function(e) {
+            if (e.key === 'Escape') $('#ud-col-info-overlay').hide();
+        });
+    }
+
+    document.getElementById('ud-ci-title').textContent   = label;
+    document.getElementById('ud-ci-desc').textContent    = desc;
+    document.getElementById('ud-ci-formula').textContent = formula;
+
+    let $ex = $('#ud-ci-example');
+    if (example) { $ex.text(example).show(); }
+    else          { $ex.hide(); }
+
+    let $overlay = $('#ud-col-info-overlay');
+    $overlay.css('display', 'flex');
+};
             let unitLabel = unit === '__ALL__' ? 'All Units' : `Unit: ${unit}`;
-
+            
             // ── KPI Cards ──────────────────────────────────────────────────────
             let kpiHtml = `
-            <div class="ud-kpi-row">
-                <div class="ud-kpi-card blue"   id="ud-card-total">  <div class="kpi-val">${total}</div>               <div class="kpi-lbl">Total Employees</div></div>
-                <div class="ud-kpi-card green"  id="ud-card-completed"><div class="kpi-val">${pct(completed,total)}%</div><div class="kpi-lbl">Completed (${completed})</div></div>
-                <div class="ud-kpi-card orange" id="ud-card-pending"> <div class="kpi-val">${pct(pending,total)}%</div>  <div class="kpi-lbl">Pending (${pending})</div></div>
-                <div class="ud-kpi-card teal"   id="ud-card-avg">     <div class="kpi-val">${pct(overdue,total)}%</div>             <div class="kpi-lbl">Overdue (${overdue})</div></div>
-                <div class="ud-kpi-card purple" id="ud-card-top">     <div class="kpi-val">${topPerf}</div>              <div class="kpi-lbl">Top Performers</div></div>
-                <div class="ud-kpi-card red"    id="ud-card-low">     <div class="kpi-val">${lowPerf}</div>              <div class="kpi-lbl">Low Performers</div></div>
-            </div>`;
+                <div class="ud-kpi-row">
+                    <div class="ud-kpi-card blue" id="ud-card-total">
+                        <div class="kpi-val">${total}</div>
+                        <div class="kpi-lbl">Total Employees ${ud_thEye('Total Employees','All appraisal records in the selected unit and period, regardless of status.','COUNT(appraisals WHERE unit = selectedUnit AND start_date BETWEEN period)','e.g. 120 appraisals exist for H1 2025')}</div>
+                    </div>
+                    <div class="ud-kpi-card green" id="ud-card-completed">
+                        <div class="kpi-val">${pct(completed,total)}%</div>
+                        <div class="kpi-lbl">Completed (${completed}) ${ud_thEye('Completed','Appraisals where workflow_state is Approved or Accepted.','COUNT(appraisals WHERE workflow_state IN [Approved, Accepted])','e.g. 80 of 120 are Approved → 67%')}</div>
+                    </div>
+                    <div class="ud-kpi-card orange" id="ud-card-pending">
+                        <div class="kpi-val">${pct(pending,total)}%</div>
+                        <div class="kpi-lbl">Pending (${pending}) ${ud_thEye('Pending','Appraisals not yet approved or accepted.','Total − Completed\nIncludes: Draft, Pending Assessor, In Review','e.g. 120 − 80 = 40 pending')}</div>
+                    </div>
+                    <div class="ud-kpi-card teal" id="ud-card-avg">
+                        <div class="kpi-val">${pct(overdue,total)}%</div>
+                        <div class="kpi-lbl">Overdue (${overdue}) ${ud_thEye('Overdue','Appraisals flagged as Overdue — past their rollout deadline without completion.','COUNT(appraisals WHERE custom_appraisal_status = Overdue)','e.g. 10 of 120 past rollout date without completion')}</div>
+                    </div>
+                    <div class="ud-kpi-card purple" id="ud-card-top">
+                        <div class="kpi-val">${topPerf}</div>
+                        <div class="kpi-lbl">Top Performers ${ud_thEye('Top Performers','Completed appraisals with total_score above 3.5.','COUNT(appraisals WHERE total_score > 3.5 AND workflow_state IN [Approved, Accepted])','e.g. 25 employees scored above 3.5')}</div>
+                    </div>
+                    <div class="ud-kpi-card red" id="ud-card-low">
+                        <div class="kpi-val">${lowPerf}</div>
+                        <div class="kpi-lbl">Low Performers ${ud_thEye('Low Performers','Completed appraisals with total_score below 2.5.','COUNT(appraisals WHERE total_score < 2.5 AND workflow_state IN [Approved, Accepted])','e.g. 8 employees scored below 2.5')}</div>
+                    </div>
+                </div>`;
+            // At the top of render_dashboard, after computing workerRows/staffRows:
+            let gradeFilter   = grade_filter_field.get_value() || 'All';
 
+            let segmentBadge = '';
+            if (gradeFilter === 'Worker (A1–A4)') {
+                segmentBadge = `<div style="background:#0f1f3d;color:#fff;border-radius:6px;padding:6px 14px;
+                    font-size:11px;font-weight:700;display:inline-block;margin-bottom:12px;">
+                </div>`;
+            } else if (gradeFilter === 'Staff') {
+                segmentBadge = `<div style="background:#2d7a4f;color:#fff;border-radius:6px;padding:6px 14px;
+                    font-size:11px;font-weight:700;display:inline-block;margin-bottom:12px;">
+                </div>`;
+            } else {
+                segmentBadge = `<div style="background:#e9ecef;color:#495057;border-radius:6px;padding:6px 14px;
+                    font-size:11px;font-weight:700;display:inline-block;margin-bottom:12px;">
+                </div>`;
+            }
             // ── Completion Table ───────────────────────────────────────────────
             let compTableRows = Object.keys(unitMap).sort().map(u => {
                 let um   = unitMap[u];
                 let comp = pct(um.completed, um.total);
                 let avg  = um.scored.length ? (um.scored.reduce((a,b)=>a+b,0)/um.scored.length).toFixed(2) : 'N/A';
                 let cls  = comp >= 80 ? 'green' : comp >= 50 ? 'orange' : 'red';
+                let barColor = comp >= 80 ? '#28a745 ' : comp >= 50 ? '#ffc107 ' : '#C8102E'; 
                 return `<tr>
                     <td style="font-weight:600;">${u}</td>
                     <td style="text-align:center;">${um.total}</td>
                     <td style="text-align:center;">${um.completed}</td>
                     <td style="text-align:center;">${um.total - um.completed}</td>
                     <td style="text-align:center;">${um.overdue}</td>
-                    <td>
+                     <td>
                         <div style="display:flex;align-items:center;gap:8px;">
-                            <div class="ud-prog" style="flex:1;"><div class="ud-prog-fill" style="width:${comp}%;background:#28a745;"></div></div>
+                            <div class="ud-prog" style="flex:1;"><div class="ud-prog-fill" style="width:${comp}%;background:${barColor};"></div></div>
                             <span class="ud-badge ud-badge-${cls}">${comp}%</span>
                         </div>
                     </td>
@@ -1013,35 +1779,70 @@ function export_pdf() {
             }).join('');
 
             let completionHtml = `
-            <div class="ud-section">
-                <div class="ud-section-header ud-toggle" data-target="ud-body-completion">
-                    <h4>📋 Completion Status — ${unitLabel}</h4><span class="ud-toggle-icon">▼</span>
+    <div class="ud-section">
+        <div class="ud-section-header ud-toggle" data-target="ud-body-completion">
+            <h4 style="white-space: nowrap;">📋 Completion Status — ${unitLabel}</h4>
+            <span class="ud-toggle-icon">▼</span>
+        </div>
+        <div class="ud-section-body ud-collapsible-body" id="ud-body-completion">
+            <div class="ud-2col" style="margin-bottom:16px;">
+                <div class="ud-chart-wrap" style="height:220px;"><canvas id="ud-donut-chart"></canvas></div>
+                <div class="ud-chart-wrap" style="height:220px;"><canvas id="ud-dept-bar-chart"></canvas></div>
+            </div>
+            <table class="ud-table">
+                <thead><tr>
+                    <th>Unit</th>
+                    <th style="text-align:center;">
+                        Total
+                        ${ud_thEye('Total',
+                            'Total number of appraisals created for this unit regardless of status.',
+                            'e.g. 45 appraisals exist for Unit A')}
+                    </th>
+                    <th style="text-align:center;">
+                        Completed
+                        ${ud_thEye('Completed',
+                            'Appraisals where the workflow state is Approved or Accepted.',
+                            'e.g. 30 out of 45 are in Approved/Accepted state')}
+                    </th>
+                    <th style="text-align:center;">
+                        Pending
+                        ${ud_thEye('Pending',
+                            'Appraisals not yet completed — includes Draft and Pending for Assessor workflow states.',
+                            'e.g. 45 − 30 = 15 pending')}
+                    </th>
+                    <th style="text-align:center;">
+                        Overdue
+                        ${ud_thEye('Overdue',
+                            'Appraisals flagged Overdue — they have passed their deadline without completion.',
+                            'e.g. 5 appraisals are past their Rollout date')}
+                    </th>
+                    <th>
+                        Progress
+                        ${ud_thEye('Progress',
+                            'Completion rate as a percentage of total appraisals for the unit.',
+                            '(Completed ÷ Total) × 100 %\n≥ 80% → green \n≥ 50% → Yellow \n< 50%  → red',
+                            'e.g. 30 ÷ 45 = 67% → amber progress bar')}
+                    </th>
+                </tr></thead>
+                <tbody>${compTableRows}</tbody>
+            </table>
+            <div class="ai-insight-card" style="margin-top:20px;">
+                <div class="ai-header">
+                    <h4 style="white-space: nowrap;">✨ Completion Insights</h4>
+                    <button class="btn btn-sm btn-primary" id="btn-ai-completion-status">Generate Insight</button>
                 </div>
-                <div class="ud-section-body ud-collapsible-body" id="ud-body-completion">
-                    <div class="ud-2col" style="margin-bottom:16px;">
-                        <div class="ud-chart-wrap" style="height:220px;"><canvas id="ud-donut-chart"></canvas></div>
-                        <div class="ud-chart-wrap" style="height:220px;"><canvas id="ud-dept-bar-chart"></canvas></div>
-                    </div>
-                    <table class="ud-table">
-                        <thead><tr>
-                            <th>Unit</th>
-                            <th style="text-align:center;">Total</th>
-                            <th style="text-align:center;">Completed</th>
-                            <th style="text-align:center;">Pending</th>
-                            <th style="text-align:center;">Overdue</th>
-                            <th>Progress</th>
-                            
-                        </tr></thead>
-                        <tbody>${compTableRows}</tbody>
-                    </table>
+                <div id="ai-content-completion-status" class="ai-body ai-insight-content">
+                    <p>Click Generate Insight for completion status analysis</p>
                 </div>
-            </div>`;
+            </div>
+        </div>
+    </div>`;
 
             // ── Trend Section ──────────────────────────────────────────────────
             let trendHtml = `
             <div class="ud-section">
                 <div class="ud-section-header ud-toggle" data-target="ud-body-trend">
-                    <h4>📈 Rating Trends — ${unitLabel}</h4><span class="ud-toggle-icon">▼</span>
+                    <h4 style="white-space: nowrap;">📈 Rating Trends — ${unitLabel}</h4><span class="ud-toggle-icon">▼</span>
                 </div>
                 <div class="ud-section-body ud-collapsible-body" id="ud-body-trend">
                     <div class="ud-2col">
@@ -1061,7 +1862,7 @@ function export_pdf() {
             let compHtml = `
             <div class="ud-section">
                 <div class="ud-section-header ud-toggle" data-target="ud-body-comp">
-                    <h4>🎯 Galfar Values & Competency-wise Status — ${unitLabel}</h4><span class="ud-toggle-icon">▼</span>
+                    <h4 style="white-space: nowrap;">🎯 Galfar Values & Competency-wise Status — ${unitLabel}</h4><span class="ud-toggle-icon">▼</span>
                 </div>
                 <div class="ud-section-body ud-collapsible-body" id="ud-body-comp">
                     <div id="ud-comp-loading" class="ud-loading">
@@ -1069,12 +1870,37 @@ function export_pdf() {
                     </div>
                     <div id="ud-comp-content" style="display:none;">
                         <div class="ud-2col" style="margin-bottom:16px;">
-                            <div><div class="ud-chart-wrap" style="height:280px;"><canvas id="ud-kra-bar-chart"></canvas></div></div>
+                            <div>
+                                <div class="ud-chart-wrap" style="height:280px; position:relative;">
+                                    <canvas id="ud-kra-bar-chart"></canvas>
+                                    <div style="position:absolute; bottom:4px; right:8px;
+                                                font-size:10px; color:#aaa; pointer-events:none;">
+                                        🔍 Click to expand
+                                    </div>
+                                </div>
+                            </div>
                             <div><div class="ud-chart-wrap" style="height:280px;"><canvas id="ud-kra-radar-chart"></canvas></div></div>
+                            <div class="ai-insight-card" style="margin-top:20px;">
+                                <div class="ai-header">
+                                    <h4 style="white-space: nowrap;">✨ Self & Assessor Score Insights</h4>
+                                    <button class="btn btn-sm btn-primary" id="btn-ai-self-assessor-bar">Generate Insight</button>
+                                </div>
+                                <div id="ai-content-self-assessor-bar" class="ai-body ai-insight-content">
+                                    <p>Click Generate Insight for self & assessor analysis<p>
+                                </div>
+                            </div>
+                            <div class="ai-insight-card" style="margin-top:20px;">
+                                <div class="ai-header">
+                                    <h4 style="white-space: nowrap;">✨ Competency Radar Insights</h4>
+                                    <button class="btn btn-sm btn-primary" id="btn-ai-competency-radar">Generate Insight</button>
+                                </div>
+                                <div id="ai-content-competency-radar" class="ai-body ai-insight-content">
+                                    <p>Click Generate Insight for competency radar analysis<p>
+                                </div>
+                            </div>
                         </div>
-                        <div id="ud-kra-table" style="margin-top:4px;"></div>
                         <div id="ud-comp-perf-table" style="margin-top:4px;"></div>
-                    </div>z
+                    </div>
                     <div id="ud-comp-empty" style="display:none;padding:20px;text-align:center;color:#868e96;font-size:13px;"></div>
                 </div>
             </div>`;
@@ -1118,20 +1944,563 @@ function export_pdf() {
                     </table>
                 </div>`;
             }
-
+            
             let workerNA = workerRows.length - workerScored.length;
             let staffNA  = staffRows.length  - staffScored.length;
             let combNA   = data.length       - scored.length;
+            $('head').append(`<style id="ud-ninebox-styles">
+            .ud-9box-section-grid {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 0;
+                margin-bottom: 16px;
+                border: 2px solid #dee2e6;
+                border-radius: 10px;
+                overflow: hidden;
+            }
+            .ud-9box-section-cell {
+                padding: 14px 10px;
+                text-align: center;
+                cursor: pointer;
+                border: 1px solid #dee2e6;
+                transition: opacity .15s;
+                min-height: 90px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .ud-9box-section-cell:hover { opacity: .85; }
+            .ud-9box-section-cell .nbc-code  { font-size: 11px; font-weight: 700; opacity: .75; margin-bottom: 4px; }
+            .ud-9box-section-cell .nbc-label { font-size: 10px; font-weight: 600; line-height: 1.4; }
+            .ud-9box-section-cell .nbc-count { font-size: 22px; font-weight: 700; margin-top: 6px; }
 
-            // ── Bell Curve Section ─────────────────────────────────────────────
+            /* Row 1 — High Potential */
+            
+             .nb-1c  { background: #FFEB3B  !important; color: #000000  !important; border: 1px solid #FFEB3B  !important; }
+            .nb-1b  { background: #AED581  !important; color: #000000  !important; border: 1px solid #AED581  !important; }
+            .nb-1a  { background: #28a745  !important; color: #000000  !important; border: 1px solid #28a745  !important; }
+            .nb-2c  { background: #ffc107  !important; color: #000000  !important; border: 1px solid #ffc107  !important; }
+            .nb-2b  { background: #FFEB3B  !important; color: #000000  !important; border: 1px solid #FFEB3B  !important; }
+            .nb-2a  { background: #AED581  !important; color: #000000  !important; border: 1px solid #AED581  !important; }
+            .nb-3c  { background: #C8102E !important; color: #000000  !important; border: 1px solid #C8102E !important; }
+            .nb-3b  { background: #ffc107  !important; color: #000000  !important; border: 1px solid #ffc107  !important; }
+            .nb-3a  { background: #FFEB3B  !important; color: #000000  !important; border: 1px solid #FFEB3B  !important; }
+            
+            .ud-9box-axis-y {
+                writing-mode: vertical-rl;
+                transform: rotate(180deg);
+                font-size: 11px; font-weight: 700;
+                color: #0f1f3d; letter-spacing: 1px;
+                text-transform: uppercase;
+                display: flex; align-items: center; justify-content: center;
+                padding: 0 6px;
+            }
+            .ud-9box-axis-x {
+                display: flex; justify-content: space-around;
+                font-size: 11px; font-weight: 700;
+                color: #0f1f3d; text-transform: uppercase;
+                letter-spacing: .5px; margin-top: 6px; padding: 0 4px;
+            }
+
+            .ud-9box-detail-panel {
+                margin-top: 14px;
+                background: #f8f9fa;
+                border-radius: 8px;
+                padding: 14px;
+                display: none;
+            }
+
+            @media print {
+                .ud-9box-section-grid { page-break-inside: avoid !important; }
+            }
+            </style>`);
+            // ═══════════════════════════════════════════════════════════════
+//  9-BOX TALENT MATRIX
+// ═══════════════════════════════════════════════════════════════
+
+// Performance band: based on total_score
+function nb_perfBand(d) {
+    let s = parseFloat(d.total_score) || 0;
+    if (s >= 4.0) return 'outstanding';   // col 3 (A)
+    if (s >= 2.5) return 'good';          // col 2 (B)
+    return 'poor';                        // col 1 (C)
+}
+
+// Potential band: based on self–assessor alignment + grade seniority
+function nb_potBand(d) {
+    let a    = parseFloat(d.total_score) || 0;
+    let s    = parseFloat(d.custom_total_self_score) || 0;
+    let delta = a - s;
+    let g    = (d.custom_grade || '').toLowerCase();
+    let senior = ['s','l','m'].some(p => g.startsWith(p)) ||
+                 ['senior','lead','manager','head','supervisor','director'].some(k => g.includes(k));
+    let pts = 0;
+    if (a >= 4.0)      pts += 2;
+    else if (a >= 3.0) pts += 1;
+    if (delta >= 0.5)  pts += 2;
+    else if (delta >= 0) pts += 1;
+    if (senior)        pts += 1;
+    if (pts >= 4) return 'high';
+    if (pts >= 2) return 'medium';
+    return 'low';
+}
+
+// Map to box key: box{pot}{perf}  e.g. box1a = high potential + outstanding performance
+const NB_PERF_MAP = { outstanding: 'a', good: 'b', poor: 'c' };
+const NB_POT_MAP  = { high: '1', medium: '2', low: '3' };
+
+let nbBoxMap = {};
+['1a','1b','1c','2a','2b','2c','3a','3b','3c'].forEach(k => { nbBoxMap[k] = []; });
+
+let nbScored = data.filter(d => parseFloat(d.total_score) > 0);
+nbScored.forEach(d => {
+    let perf = nb_perfBand(d);
+    let pot  = nb_potBand(d);
+    let key  = NB_POT_MAP[pot] + NB_PERF_MAP[perf];
+    nbBoxMap[key].push(d);
+});
+
+const NB_CELLS = [
+    { key:'1c', cls:'nb-1c', code:'1C', label:'Poor Perf<br>High Potential'        },
+    { key:'1b', cls:'nb-1b', code:'1B', label:'Good Perf<br>High Potential'        },
+    { key:'1a', cls:'nb-1a', code:'1A', label:'Outstanding Perf<br>High Potential' },
+    { key:'2c', cls:'nb-2c', code:'2C', label:'Poor Perf<br>Moderate Potential'    },
+    { key:'2b', cls:'nb-2b', code:'2B', label:'Good Perf<br>Moderate Potential'    },
+    { key:'2a', cls:'nb-2a', code:'2A', label:'Outstanding Perf<br>Moderate Potential' },
+    { key:'3c', cls:'nb-3c', code:'3C', label:'Poor Perf<br>Limited Potential'     },
+    { key:'3b', cls:'nb-3b', code:'3B', label:'Good Perf<br>Limited Potential'     },
+    { key:'3a', cls:'nb-3a', code:'3A', label:'Outstanding Perf<br>Limited Potential' },
+];
+
+let nbGridHtml = NB_CELLS.map(cell => `
+    <div class="ud-9box-section-cell ${cell.cls}"
+         onclick="ud_show9BoxDetail('${cell.key}')">
+        <div class="nbc-code">${cell.code}</div>
+        <div class="nbc-label">${cell.label}</div>
+        <div class="nbc-count">${nbBoxMap[cell.key].length}</div>
+    </div>`).join('');
+
+    // KPI summary row for 9-box
+    let nbStars    = nbBoxMap['1a'].length;
+    let nbHiPos    = nbBoxMap['1b'].length + nbBoxMap['2a'].length;
+    let nbAtRisk   = nbBoxMap['3c'].length;
+    let nbEnigmas  = nbBoxMap['1c'].length;
+
+let nineBoxHtml = `
+<div class="ud-section">
+    <div class="ud-section-header ud-toggle" data-target="ud-body-ninebox">
+        <h4 style="white-space: nowrap;">🗂 9-Box Talent Matrix — ${unitLabel}</h4>
+
+    <div class="ud-section-desc">
+        <strong>9-Box Talent Matrix</strong> plots employees on a grid of <strong> Performance</strong> (X-axis) vs <strong>Leadership Potential</strong> (Y-axis).
+        Potential is derived from assessor vs self-score alignment and grade seniority.
+        <strong>Click any cell</strong> to view the employees in that segment. Stars (1A) are your highest-priority retention targets.
+    </div>
+     <span class="ud-toggle-icon">▼</span>
+     </div>
+    <div class="ud-section-body ud-collapsible-body" id="ud-body-ninebox">
+
+        
+
+       
+
+        <!-- 2-column layout: left=matrix, right=detail -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start;">
+
+            <!-- LEFT: 9-box matrix -->
+            <div style="display:flex;gap:8px;align-items:stretch;">
+
+                <!-- Y-axis label -->
+                <div style="display:flex;align-items:center;justify-content:center;width:22px;">
+                    <div style="writing-mode:vertical-rl;transform:rotate(180deg);
+                                font-size:11px;font-weight:700;color:#0f1f3d;
+                                text-transform:uppercase;letter-spacing:1.5px;
+                                white-space:nowrap;">
+                        Leadership Potential ↑
+                    </div>
+                </div>
+
+                <!-- Grid + X-axis -->
+                <div style="flex:1;">
+                    <div style="
+                        display:grid;
+                        grid-template-columns:repeat(3,1fr);
+                        grid-template-rows:repeat(3,150px);
+                        gap:6px;
+                        margin-bottom:8px;
+                    ">
+                        ${NB_CELLS.map(cell => `
+                        <div class="ud-9box-section-cell ${cell.cls}"
+                             style="height:150px;padding:12px 8px;
+                                    display:flex;flex-direction:column;
+                                    align-items:center;justify-content:center;
+                                    border-radius:8px;cursor:pointer;
+                                    border:2px solid rgba(255,255,255,0.3);
+                                    box-shadow:0 2px 6px rgba(0,0,0,.10);
+                                    transition:transform .15s, box-shadow .15s;
+                                    -webkit-print-color-adjust:exact;print-color-adjust:exact;"
+                             onmouseover="this.style.transform='scale(1.04)';this.style.boxShadow='0 6px 18px rgba(0,0,0,.18)';"
+                             onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 2px 6px rgba(0,0,0,.10)';"
+                             onclick="ud_show9BoxDetail('${cell.key}')">
+                            <div style="font-size:11px;font-weight:700;opacity:.75;margin-bottom:3px;">
+                                ${cell.code}
+                            </div>
+                            <div style="font-size:10px;font-weight:600;line-height:1.4;text-align:center;opacity:.85;">
+                                ${cell.label}
+                            </div>
+                            <div style="font-size:28px;font-weight:700;margin-top:8px;line-height:1;">
+                                ${nbBoxMap[cell.key].length}
+                            </div>
+                        </div>`).join('')}
+                    </div>
+
+                    <!-- X-axis labels -->
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:4px;">
+                        <div style="text-align:center;font-size:10px;font-weight:700;color:#495057;
+                                    background:#f8f9fa;border-radius:4px;padding:4px 0;">Poor</div>
+                        <div style="text-align:center;font-size:10px;font-weight:700;color:#495057;
+                                    background:#f8f9fa;border-radius:4px;padding:4px 0;">Good</div>
+                        <div style="text-align:center;font-size:10px;font-weight:700;color:#495057;
+                                    background:#f8f9fa;border-radius:4px;padding:4px 0;">Outstanding</div>
+                    </div>
+                    <div style="text-align:center;font-size:11px;font-weight:700;
+                                color:#0f1f3d;text-transform:uppercase;letter-spacing:.5px;margin-top:4px;">
+                        Performance →
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT: Detail panel -->
+            <div id="ud-9box-detail-panel"
+     style="background:#f8f9fa;border-radius:10px;padding:18px;
+            border:1px solid #e9ecef;
+            height:100%;min-height:498px;
+            display:flex;flex-direction:column;justify-content:flex-start;">
+                <div id="ud-9box-detail-content"
+                     style="color:#adb5bd;font-size:13px;text-align:center;">
+                    <div style="font-size:40px;margin-bottom:10px;">🗂</div>
+                    <div style="font-weight:600;color:#868e96;margin-bottom:6px;">No Box Selected</div>
+                    Click any cell on the left to view the employees in that segment.
+                </div>
+            </div>         
+        </div>
+        
+        <div class="ai-insight-card" style="margin-top:20px;">
+            <div class="ai-header">
+                <h4 style="white-space: nowrap;">✨ 9-Box Insights</h4>
+                <button class="btn btn-sm btn-primary" id="btn-ai-9-box">Generate Insight</button>
+            </div>
+            <div id="ai-content-9-box" class="ai-body ai-insight-content">
+                <p>Click Generate Insight for 9-box analysis<p>
+            </div>
+        </div> 
+    </div>
+</div>`;
+window.ud_show9BoxDetail = function(key) {
+    let employees = nbBoxMap[key] || [];
+    let panel     = document.getElementById('ud-9box-detail-panel');
+    let content   = document.getElementById('ud-9box-detail-content');
+    if (!panel || !content) return;
+
+    let cellInfo  = NB_CELLS.find(c => c.key === key);
+    let labelText = cellInfo
+        ? cellInfo.code + ' — ' + cellInfo.label.replace('<br>', ' / ')
+        : key;
+
+    // ── Empty state ──────────────────────────────────────────────────────
+    if (!employees.length) {
+        content.innerHTML = `
+            <div style="text-align:center;color:#adb5bd;font-size:13px;padding:40px 0;">
+                <div style="font-size:28px;margin-bottom:8px;">📭</div>
+                No employees in box <strong>${labelText}</strong>
+            </div>`;
+        return;
+    }
+
+    // ── Pagination config ────────────────────────────────────────────────
+    const PAGE_SIZE = 10;
+    let currentPage = 0;
+    const totalPages = Math.ceil(employees.length / PAGE_SIZE);
+
+    // ── Row builder ──────────────────────────────────────────────────────
+    function buildRows(page) {
+        let start = page * PAGE_SIZE;
+        let end   = Math.min(start + PAGE_SIZE, employees.length);
+        return employees.slice(start, end).map(d => {
+            let s    = parseFloat(d.total_score);
+            let self = parseFloat(d.custom_total_self_score) || 0;
+            let barW = Math.min(100, Math.round((s / 5) * 100));
+            let barColor = s >= 4 ? '#f4a100' : s >= 3 ? '#28a745' : s >= 2 ? '#ffc107' : '#C8102E';
+            return `<tr>
+                <td>
+                    <div style="font-weight:700;font-size:12px;">${d.employee_name || d.employee}</div>
+                    <div style="font-size:10px;color:#868e96;">${d.employee}</div>
+                </td>
+                <td><span class="ud-badge ud-badge-blue">${d.custom_grade || '—'}</span></td>
+                <td style="font-size:11px;">${d.custom_unit || '—'}</td>
+                <td>
+                    <div style="display:flex;align-items:center;gap:5px;">
+                        <div style="flex:1;height:6px;background:#e9ecef;border-radius:3px;overflow:hidden;">
+                            <div style="width:${barW}%;height:100%;background:${barColor};border-radius:3px;
+                                        -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+                        </div>
+                        <span style="font-size:10px;font-weight:700;min-width:28px;color:${barColor};">
+                            ${s.toFixed(2)}
+                        </span>
+                    </div>
+                </td>
+                <td style="text-align:center;font-size:11px;color:#868e96;">
+                    ${self ? self.toFixed(2) : '—'}
+                </td>
+                <td>
+                    ${['Approved','Accepted'].includes(d.workflow_state)
+                        ? '<span class="ud-badge ud-badge-green">✓ Done</span>'
+                        : d.custom_appraisal_status === 'Overdue'
+                            ? '<span class="ud-badge ud-badge-red">Overdue</span>'
+                            : '<span class="ud-badge ud-badge-orange">Pending</span>'}
+                </td>
+                <td>
+                    <button class="ud-perf-action ud-act-view"
+                        onclick="frappe.set_route('Form','Appraisal','${d.name}')">View</button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    // ── Pagination controls renderer ─────────────────────────────────────
+    function renderPagination(page) {
+        let start = page * PAGE_SIZE + 1;
+        let end   = Math.min((page + 1) * PAGE_SIZE, employees.length);
+        return `
+        <div style="display:flex;align-items:center;justify-content:space-between;
+                    padding:8px 10px;border-top:1px solid #e9ecef;
+                    background:#f8f9fa;border-radius:0 0 6px 6px;">
+            <button id="nb-pg-prev"
+                ${page === 0 ? 'disabled' : ''}
+                style="padding:4px 12px;font-size:11px;font-weight:700;
+                       border:1px solid #dee2e6;border-radius:4px;
+                       background:${page === 0 ? '#f8f9fa' : '#fff'};
+                       color:${page === 0 ? '#adb5bd' : '#495057'};
+                       cursor:${page === 0 ? 'not-allowed' : 'pointer'};">
+                ◀ Prev
+            </button>
+            <span style="font-size:11px;color:#868e96;">
+                Showing <strong>${start}–${end}</strong> of <strong>${employees.length}</strong>
+                &nbsp;·&nbsp; Page <strong>${page + 1}</strong> of <strong>${totalPages}</strong>
+            </span>
+            <button id="nb-pg-next"
+                ${page >= totalPages - 1 ? 'disabled' : ''}
+                style="padding:4px 12px;font-size:11px;font-weight:700;
+                       border:1px solid #dee2e6;border-radius:4px;
+                       background:${page >= totalPages - 1 ? '#f8f9fa' : '#fff'};
+                       color:${page >= totalPages - 1 ? '#adb5bd' : '#495057'};
+                       cursor:${page >= totalPages - 1 ? 'not-allowed' : 'pointer'};">
+                Next ▶
+            </button>
+        </div>`;
+    }
+
+    // ── Full panel render ────────────────────────────────────────────────
+    function renderPanel(page) {
+        content.innerHTML = `
+
+            <!-- Header -->
+            <div style="display:flex;justify-content:space-between;align-items:center;
+                        margin-bottom:10px;flex-wrap:wrap;gap:6px;">
+                <div>
+                    <div style="font-size:13px;font-weight:700;color:#0f1f3d;">${labelText}</div>
+                    <div style="font-size:11px;color:#868e96;margin-top:2px;">
+                        ${employees.length} employee${employees.length !== 1 ? 's' : ''} in this segment
+                    </div>
+                </div>
+                <button id="nb-clear-btn"
+                    style="background:none;border:1px solid #dee2e6;border-radius:6px;
+                           padding:4px 10px;font-size:11px;cursor:pointer;color:#868e96;">
+                    ✕ Clear
+                </button>
+            </div>
+
+            <!-- Table wrapper with sticky header -->
+            <div style="border:1px solid #e9ecef;border-radius:6px;overflow:hidden;">
+                <div style="overflow-y:auto;max-height:340px;">
+                    <table class="ud-table" style="font-size:11px;width:100%;">
+                        <thead>
+                            <tr>
+                                <th style="position:sticky;top:0;z-index:5;
+                                           background:#0f1f3d;color:#fff;
+                                           -webkit-print-color-adjust:exact;
+                                           print-color-adjust:exact;
+                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Employee</th>
+                                <th style="position:sticky;top:0;z-index:5;
+                                           background:#0f1f3d;color:#fff;
+                                           -webkit-print-color-adjust:exact;
+                                           print-color-adjust:exact;
+                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Grade</th>
+                                <th style="position:sticky;top:0;z-index:5;
+                                           background:#0f1f3d;color:#fff;
+                                           -webkit-print-color-adjust:exact;
+                                           print-color-adjust:exact;
+                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Unit</th>
+                                <th style="position:sticky;top:0;z-index:5;
+                                           background:#0f1f3d;color:#fff;min-width:120px;
+                                           -webkit-print-color-adjust:exact;
+                                           print-color-adjust:exact;
+                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Score</th>
+                                <th style="position:sticky;top:0;z-index:5;text-align:center;
+                                           background:#0f1f3d;color:#fff;
+                                           -webkit-print-color-adjust:exact;
+                                           print-color-adjust:exact;
+                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Self</th>
+                                <th style="position:sticky;top:0;z-index:5;
+                                           background:#0f1f3d;color:#fff;
+                                           -webkit-print-color-adjust:exact;
+                                           print-color-adjust:exact;
+                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Status</th>
+                                <th style="position:sticky;top:0;z-index:5;
+                                           background:#0f1f3d;color:#fff;
+                                           -webkit-print-color-adjust:exact;
+                                           print-color-adjust:exact;
+                                           box-shadow:0 2px 4px rgba(0,0,0,.15);">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="nb-table-body">
+                            ${buildRows(page)}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination bar (only shown if > PAGE_SIZE) -->
+                ${employees.length > PAGE_SIZE ? renderPagination(page) : ''}
+            </div>`;
+
+        // ── Bind buttons after innerHTML is set ──────────────────────────
+        let prevBtn = document.getElementById('nb-pg-prev');
+        let nextBtn = document.getElementById('nb-pg-next');
+        let clearBtn = document.getElementById('nb-clear-btn');
+
+        if (prevBtn) {
+            prevBtn.addEventListener('click', function() {
+                if (currentPage > 0) {
+                    currentPage--;
+                    document.getElementById('nb-table-body').innerHTML = buildRows(currentPage);
+                    // Re-render pagination controls
+                    let pg = content.querySelector('#nb-pg-prev').closest('div');
+                    pg.outerHTML = renderPagination(currentPage);
+                    bindPagination();
+                }
+            });
+        }
+
+        if (nextBtn) {
+            nextBtn.addEventListener('click', function() {
+                if (currentPage < totalPages - 1) {
+                    currentPage++;
+                    document.getElementById('nb-table-body').innerHTML = buildRows(currentPage);
+                    let pg = content.querySelector('#nb-pg-prev').closest('div');
+                    pg.outerHTML = renderPagination(currentPage);
+                    bindPagination();
+                }
+            });
+        }
+
+        if (clearBtn) {
+            clearBtn.addEventListener('click', function() {
+                content.innerHTML = `
+                    <div style="text-align:center;color:#adb5bd;font-size:13px;padding:40px 0;">
+                        <div style="font-size:40px;margin-bottom:10px;">🗂</div>
+                        <div style="font-weight:600;color:#868e96;margin-bottom:6px;">No Box Selected</div>
+                        Click any cell on the left to view the employees in that segment.
+                    </div>`;
+            });
+        }
+    }
+
+    // ── Pagination rebind helper ──────────────────────────────────────────
+    function bindPagination() {
+        let prevBtn  = document.getElementById('nb-pg-prev');
+        let nextBtn  = document.getElementById('nb-pg-next');
+
+        if (prevBtn) {
+            prevBtn.addEventListener('click', function() {
+                if (currentPage > 0) {
+                    currentPage--;
+                    document.getElementById('nb-table-body').innerHTML = buildRows(currentPage);
+                    let pg = content.querySelector('#nb-pg-prev').closest('div');
+                    pg.outerHTML = renderPagination(currentPage);
+                    bindPagination();
+                }
+            });
+        }
+        if (nextBtn) {
+            nextBtn.addEventListener('click', function() {
+                if (currentPage < totalPages - 1) {
+                    currentPage++;
+                    document.getElementById('nb-table-body').innerHTML = buildRows(currentPage);
+                    let pg = content.querySelector('#nb-pg-prev').closest('div');
+                    pg.outerHTML = renderPagination(currentPage);
+                    bindPagination();
+                }
+            });
+        }
+    }
+
+    // ── Initial render ───────────────────────────────────────────────────
+    renderPanel(0);
+};
+
+window.ud_9BoxData = {
+    summary: Object.fromEntries(
+        NB_CELLS.map(cell => [
+            cell.key,
+            {
+                code: cell.code,
+                label: cell.label.replace('<br>', ' / '),
+                count: nbBoxMap[cell.key].length,
+                employees: nbBoxMap[cell.key].map(d => ({
+                    employee: d.employee,
+                    employee_name: d.employee_name,
+                    grade: d.custom_grade,
+                    unit: d.custom_unit,
+                    score: parseFloat(d.total_score) || 0,
+                    self_score: parseFloat(d.custom_total_self_score) || 0,
+                    status: d.workflow_state
+                }))
+            }
+        ])
+    ),
+    totals: {
+        stars: nbBoxMap['1a'].length,
+        high_potential: nbBoxMap['1b'].length + nbBoxMap['2a'].length,
+        at_risk: nbBoxMap['3c'].length,
+        enigmas: nbBoxMap['1c'].length,
+        total_scored: nbScored.length
+    }
+};
+    // ── Bell Curve Section ─────────────────────────────────────────────
             // NOTE: All 3 panels are visible in DOM (no display:none) — hidden via CSS class for screen only
             let bellHtml = `
             <div class="ud-section">
                 <div class="ud-section-header ud-toggle" data-target="ud-body-bell">
-                    <h4>🔔 Bell Curve Distribution — ${unitLabel}</h4>
-                    <div style="display:flex;align-items:center;gap:8px;" onclick="event.stopPropagation();">
+                <h4 style="white-space: nowrap;">🔔 Bell Curve Distribution — ${unitLabel}
+                    ${ud_thEye('Bell Curve Distribution',
+                        'Compares actual rating distribution against the target bell curve. Significant deviation indicates lenient or stringent assessors.',
+                        'Target distribution:\n  A (Excellent)  = 10% of scored employees\n  B (Very Good)   = 20%\n  C (Good)        = 50%\n  D (Acceptable)  = 15%\n  E (Poor)        = 5%\n\nTarget count = Total scored × target %\nActual count = COUNT per grade bucket',
+                        'e.g. 100 scored employees → Target A = 10, Actual A = 25 → Lenient signal')}
+                </h4>
+                    <div class="ud-section-desc">
+                        <strong>Bell Curve Distribution</strong> compares the actual rating distribution against the target bell curve.
+                        The target follows a <strong>5% E · 15% D · 50% C · 20% B · 10% A</strong> distribution.
+                        Significant deviation from the target indicates lenient or stringent assessors.
+                        Toggle between Combined, Worker (A1–A4), and Staff views using the buttons above.
+                    </div>
+                    <div style="display:flex;align-items:left;gap:8px;" onclick="event.stopPropagation();">
                         <div class="ud-bell-tab-bar">
-                            <button class="ud-bell-tab-btn active-combined" data-bell="combined">💼 Staff</button>
+                            <button class="ud-bell-tab-btn active-combined" data-bell="combined">👥 Combined</button>
+                            <button class="ud-bell-tab-btn" data-bell="worker">🔧 Worker</button>
+                            <button class="ud-bell-tab-btn" data-bell="staff">💼 Staff</button>
                         </div>
                         <span class="ud-toggle-icon" style="margin-left:8px;">▼</span>
                     </div>
@@ -1150,20 +2519,31 @@ function export_pdf() {
             </div>`;
             
 // ── Segment the scored data ───────────────────────────────────────────────
-let perfScored     = data.filter(d => parseFloat(d.total_score) > 0);
+let perfScored     = data.filter(d => parseFloat(d.total_score) >= 0);
+
 let perfTopList    = [...perfScored]
-    .filter(d => parseFloat(d.total_score) >= 4.0)
+    .filter(d => parseFloat(d.total_score) >= 4.0 && ['Approved','Accepted'].includes(d.workflow_state))
     .sort((a, b) => parseFloat(b.total_score) - parseFloat(a.total_score));
-let perfStrongList = [...perfScored]
-    .filter(d => parseFloat(d.total_score) >= 3.5 && parseFloat(d.total_score) < 4.0)
+
+let perfStrongList = []; // removed — no longer used
+
+let perfMiddleList = [...perfScored]
+    .filter(d => parseFloat(d.total_score) >= 3.0
+              && parseFloat(d.total_score) < 4.0
+              && ['Approved','Accepted'].includes(d.workflow_state))
     .sort((a, b) => parseFloat(b.total_score) - parseFloat(a.total_score));
+
 let perfLowList    = [...perfScored]
-    .filter(d => parseFloat(d.total_score) < 2.5)
+    .filter(d => parseFloat(d.total_score) >= 1.0
+              && parseFloat(d.total_score) < 3.0
+              && ['Approved','Accepted'].includes(d.workflow_state))
     .sort((a, b) => parseFloat(a.total_score) - parseFloat(b.total_score));
+
 let perfCritical   = perfLowList.filter(d => parseFloat(d.total_score) <= 2.0);
 let perfAvgScoreVal = perfScored.length
     ? (perfScored.reduce((s, d) => s + parseFloat(d.total_score), 0) / perfScored.length).toFixed(2)
     : 'N/A';
+
  
 // ── Per-unit heatmap data ─────────────────────────────────────────────────
 let perfUnitHeat = {};
@@ -1195,12 +2575,12 @@ let heatRows = Object.keys(perfUnitHeat).sort().map(u => {
     let tp  = Math.round((h.a / h.total) * 100);
     let lp  = Math.round(((h.e + h.d) / h.total) * 100);
     return `<tr>
-        <td style="font-weight:700;padding:8px 10px;border-bottom:1px solid #e9ecef;">${u}</td>
-        ${heatCell(h.e, h.total, '#e53935')}
-        ${heatCell(h.d, h.total, '#ffa726')}
-        ${heatCell(h.c, h.total, '#66bb6a')}
-        ${heatCell(h.b, h.total, '#42a5f5')}
-        ${heatCell(h.a, h.total, '#C8102E')}
+        <td style="font-weight:700;padding:8px 10px;border-bottom:1px solid #e9ecef;">${u}</td> 
+        ${heatCell(h.a, h.total, '#28a745 ')}
+        ${heatCell(h.b, h.total, '#AED581 ')}
+        ${heatCell(h.c, h.total, '#FFEE58 ')}
+        ${heatCell(h.d, h.total, '#ffc107 ')}
+        ${heatCell(h.e, h.total, '#C8102E')}
         <td style="font-weight:700;padding:8px 10px;border-bottom:1px solid #e9ecef;">${avg}</td>
         <td style="padding:8px 10px;border-bottom:1px solid #e9ecef;">
             <span class="ud-badge" style="background:rgba(244,161,0,.15);color:#c68a00;">${tp}%</span>
@@ -1224,12 +2604,13 @@ let topTableRows = perfTopList.map((d, i) => {
         <td><span class="ud-badge ud-badge-blue">${d.custom_grade || '—'}</span></td>
         <td style="font-size:11px;">${d.custom_unit || '—'}</td>
         <td style="font-size:11px;">${d.custom_division || '—'}</td>
-        <td style="text-align:center;font-weight:700;font-size:14px;color:#f4a100;">
-            ${parseFloat(d.total_score).toFixed(2)}
-        </td>
         <td style="text-align:center;font-size:11px;">
             ${d.custom_total_self_score ? parseFloat(d.custom_total_self_score).toFixed(2) : '—'}
         </td>
+        <td style="text-align:center;font-weight:700;font-size:14px;color:#f4a100;">
+            ${parseFloat(d.total_score).toFixed(2)}
+        </td>
+        
         <td>${perfScoreBar(d.total_score, '#f4a100')}</td>
         <td><span class="ud-badge ${band.cls}">${band.label}</span></td>
         <td>${perfStatusBadge(d)}</td>
@@ -1254,12 +2635,13 @@ let strongTableRows = perfStrongList.map((d, i) => {
         <td><span class="ud-badge ud-badge-blue">${d.custom_grade || '—'}</span></td>
         <td style="font-size:11px;">${d.custom_unit || '—'}</td>
         <td style="font-size:11px;">${d.custom_division || '—'}</td>
-        <td style="text-align:center;font-weight:700;font-size:14px;color:#0f1f3d;">
-            ${parseFloat(d.total_score).toFixed(2)}
-        </td>
         <td style="text-align:center;font-size:11px;">
             ${d.custom_total_self_score ? parseFloat(d.custom_total_self_score).toFixed(2) : '—'}
         </td>
+        <td style="text-align:center;font-weight:700;font-size:14px;color:#0f1f3d;">
+            ${parseFloat(d.total_score).toFixed(2)}
+        </td>
+        
         <td>${perfScoreBar(d.total_score, '#0f1f3d')}</td>
         <td><span class="ud-badge ${band.cls}">${band.label}</span></td>
         <td>${perfStatusBadge(d)}</td>
@@ -1270,6 +2652,39 @@ let strongTableRows = perfStrongList.map((d, i) => {
     </tr>`;
 }).join('') || `<tr><td colspan="11" style="text-align:center;padding:20px;color:#adb5bd;">No strong performers (3.5–4.0) found</td></tr>`;
  
+
+// ── Middle performers 2.5–3.5 ─────────────────────────────────────────────
+let MiddleTableRows = perfMiddleList.map((d, i) => {
+    let band = perfBand(d.total_score);
+    frappe.open_in_new_tab = true;
+    return `<tr>
+        <td>${perfRankBadge(i)}</td>
+        <td>
+            <div style="font-weight:700;font-size:12px;">${d.employee_name || d.employee}</div>
+            <div style="font-size:10px;color:#868e96;">${d.employee}</div>
+        </td>
+        <td><span class="ud-badge ud-badge-blue">${d.custom_grade || '—'}</span></td>
+        <td style="font-size:11px;">${d.custom_unit || '—'}</td>
+        <td style="font-size:11px;">${d.custom_division || '—'}</td>
+         <td style="text-align:center;font-size:11px;">
+            ${d.custom_total_self_score ? parseFloat(d.custom_total_self_score).toFixed(2) : '—'}
+        </td>
+        <td style="text-align:center;font-weight:700;font-size:14px;color:#f4a100;">
+            ${parseFloat(d.total_score).toFixed(2)}
+        </td>
+       
+        <td>${perfScoreBar(d.total_score, '#f4a100')}</td>
+        <td><span class="ud-badge ${band.cls}">${band.label}</span></td>
+        <td>${perfStatusBadge(d)}</td>
+        <td>
+            
+            <button class="ud-perf-action ud-act-view"
+                onclick="frappe.set_route('Form','Appraisal','${d.name}')">View</button>
+        </td>
+    </tr>`;
+}).join('') || `<tr><td colspan="11" style="text-align:center;padding:20px;color:#adb5bd;">No top performers (≥ 4.0) found</td></tr>`;
+ 
+
 // ── Succession / retention risk rows ─────────────────────────────────────
 let retentionAtRisk = [...perfTopList, ...perfStrongList].filter(d => {
     return perfRetentionRisk(d) !== 'l';
@@ -1314,12 +2729,13 @@ let lowTableRows = perfLowList.map((d, i) => {
         <td><span class="ud-badge ud-badge-blue">${d.custom_grade || '—'}</span></td>
         <td style="font-size:11px;">${d.custom_unit || '—'}</td>
         <td style="font-size:11px;">${d.custom_division || '—'}</td>
-        <td style="text-align:center;font-weight:700;font-size:14px;color:#C8102E;">
-            ${parseFloat(d.total_score).toFixed(2)}
-        </td>
         <td style="text-align:center;font-size:11px;">
             ${d.custom_total_self_score ? parseFloat(d.custom_total_self_score).toFixed(2) : '—'}
         </td>
+        <td style="text-align:center;font-weight:700;font-size:14px;color:#C8102E;">
+            ${parseFloat(d.total_score).toFixed(2)}
+        </td>
+        
         <td>${perfScoreBar(d.total_score, '#C8102E')}</td>
         <td><span class="ud-badge ${band.cls}">${band.label}</span></td>
         <td>${perfStatusBadge(d)}</td>
@@ -1362,38 +2778,90 @@ let pipBannerText = perfCritical.length
     ? `🚨 ${perfCritical.length} employee(s) score ≤ 2.0 — immediate PIP review required.`
     : 'No critical performers (≤ 2.0) detected in this period.';
     
-            let performerHtml = `
+let performerHtml = `
 <div class="ud-section">
     <div class="ud-section-header ud-toggle" data-target="ud-body-performers">
-        <h4>🏆 High / Low Performer Tracker — ${unitLabel}</h4>
+        <h4 style="white-space: nowrap;">🏆 High / Low Performer Tracker — ${unitLabel}
+        ${ud_thEye('High / Low Performer Tracker',"Segments employees into performance bands based on final appraisal scores. Bands are derived from the assessor's final score.",
+            "Formula: Band = score ≥ 4.0 → Top | 3.0–3.99 → Middle | &lt; 3.0 → Low | ≤ 2.0 → Critical (PIP)")}
+        </h4>
+        <div class="ud-section-desc">
+            <strong>Performer Tracker</strong> segments employees into performance bands based on final appraisal scores.
+            <strong>Top ≥ 4.0 · Strong 3.5–4.0 · Middle 2.5–3.5 · Low &lt; 2.5 · Critical ≤ 2.0 (PIP)</strong>.
+            The heatmap panel shows score band concentration per unit. Use the Top Talent tab to identify succession candidates and the Low Performers tab to initiate PIPs.
+        </div>
         <span class="ud-toggle-icon">▼</span>
     </div>
     <div class="ud-section-body ud-collapsible-body" id="ud-body-performers">
- 
-        <!-- ── KPI Summary Row ── -->
+
         <!-- ── KPI Summary Row ── -->
         <div class="ud-perf-kpi-row">
             <div class="ud-perf-kpi gold" id="udp-kpi-top" style="cursor:pointer;" title="Open Top Performers list">
+               
                 <div class="pkv">${perfTopList.length}</div>
-                <div class="pkl">Top Performers ≥ 4.0</div>
+                <div class="pkl">
+                    Top Performers
+                    ${ud_thEye(
+                        'Top Performers',
+                        'Employees whose final appraisal score is 4.0 or above.',
+                        'Score ≥ 4.0'
+                    )}
+                </div>
             </div>
-            <div class="ud-perf-kpi navy" id="udp-kpi-strong" style="cursor:pointer;" title="Open Strong Performers list">
-                <div class="pkv">${perfStrongList.length}</div>
-                <div class="pkl">Strong Performers 3.5–4.0</div>
+
+            <div class="ud-perf-kpi orange" id="udp-kpi-middle" style="cursor:pointer;" title="Open Middle Performers list">
+                
+                <div class="pkv">${perfMiddleList.length}</div>
+                <div class="pkl">
+                    Middle Performers (3–4)
+                    ${ud_thEye(
+                        'Middle Performers',
+                        'Employees performing at an acceptable level but below top performer range.',
+                        '3.0 ≤ Score < 4.0'
+                    )}
+                </div>
             </div>
+
             <div class="ud-perf-kpi red" id="udp-kpi-low" style="cursor:pointer;" title="Open Low Performers list">
+                
                 <div class="pkv">${perfLowList.length}</div>
-                <div class="pkl">Low Performers &lt; 2.5</div>
+                <div class="pkl">
+                    Low Performers (1–3)
+                    ${ud_thEye(
+                        'Low Performers',
+                        'Employees requiring coaching or development attention.',
+                        '2.0 < Score < 3.0'
+                    )}
+                </div>
             </div>
+
             <div class="ud-perf-kpi purple" id="udp-kpi-critical" style="cursor:pointer;" title="Open Critical performers list">
+                
                 <div class="pkv">${perfCritical.length}</div>
-                <div class="pkl">Critical (PIP) ≤ 2.0</div>
+                <div class="pkl">
+                    Critical (PIP)
+                    ${ud_thEye(
+                        'Critical / PIP',
+                        'Employees with serious performance concerns who may require a Performance Improvement Plan.',
+                        'Score ≤ 2.0'
+                    )}
+                </div>
             </div>
+
             <div class="ud-perf-kpi green">
+                
                 <div class="pkv">${perfAvgScoreVal}</div>
-                <div class="pkl">Avg Score (Scored)</div>
+                <div class="pkl">
+                    Avg Score (Scored)
+                    ${ud_thEye(
+                        'Average Score',
+                        'Average appraisal score across all employees with completed assessments.',
+                        'Average = Sum of Scores ÷ Number of Scored Employees'
+                    )}
+                </div>
             </div>
         </div>
+
         <!-- ── Sub-tab buttons ── -->
         <div class="ud-perf-tabs" id="ud-perf-tabs-inner">
             <div class="ud-perf-tab pt-all"
@@ -1409,7 +2877,14 @@ let pipBannerText = perfCritical.length
                     el.classList.add('pt-top');
                     el.closest('#ud-body-performers').querySelectorAll('.ud-perf-panel').forEach(p=>p.classList.remove('active'));
                     el.closest('#ud-body-performers').querySelector('#udp-top').classList.add('active');
-                })(this)">🌟 Top Talent (${perfTopList.length + perfStrongList.length})</div>
+                })(this)">🟢 Top Talent (${perfTopList.length})</div>
+            <div class="ud-perf-tab"
+                onclick="(function(el){
+                    el.closest('#ud-body-performers').querySelectorAll('.ud-perf-tab').forEach(t=>{t.className='ud-perf-tab';});
+                    el.classList.add('pt-top');
+                    el.closest('#ud-body-performers').querySelectorAll('.ud-perf-panel').forEach(p=>p.classList.remove('active'));
+                    el.closest('#ud-body-performers').querySelector('#udp-middle').classList.add('active');
+                })(this)">🟠 Middle Performers (${perfMiddleList.length})</div>
             <div class="ud-perf-tab"
                 onclick="(function(el){
                     el.closest('#ud-body-performers').querySelectorAll('.ud-perf-tab').forEach(t=>{t.className='ud-perf-tab';});
@@ -1418,23 +2893,23 @@ let pipBannerText = perfCritical.length
                     el.closest('#ud-body-performers').querySelector('#udp-low').classList.add('active');
                 })(this)">🔴 Low Performers (${perfLowList.length})</div>
         </div>
- 
+
         <!-- ══════════════ PANEL 1: Score Heatmap ══════════════ -->
         <div class="ud-perf-panel active" id="udp-all">
             <div style="font-size:11px;color:#868e96;margin-bottom:10px;">
                 Score band distribution per unit. Cell color intensifies with higher concentration.
                 Bands: E ≤1.0 | D 1–2 | C 2–3 | B 3–4 | A ≥4
             </div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-heat-tbl">
                     <thead>
                         <tr>
                             <th style="text-align:left;width:140px;">Unit</th>
-                            <th style="background:#e53935;">E ≤1.0</th>
-                            <th style="background:#ffa726;color:#333;">D 1–2</th>
-                            <th style="background:#66bb6a;">C 2–3</th>
-                            <th style="background:#42a5f5;">B 3–4</th>
-                            <th style="background:#C8102E;">A ≥4</th>
+                            <th style="background:#28a745;">A ≥4</th>
+                            <th style="background:#AED581;">B 3–4</th>
+                            <th style="background:#FFEE58;">C 2–3</th>
+                            <th style="background:#ffc107;color:#333;">D 1–2</th>
+                            <th style="background:#C8102E;">E ≤1.0</th>
                             <th>Avg Score</th>
                             <th>Top % (A)</th>
                             <th>Low % (D+E)</th>
@@ -1443,12 +2918,19 @@ let pipBannerText = perfCritical.length
                     <tbody>${heatRows}</tbody>
                 </table>
             </div>
+            <div class="ai-insight-card" style="margin-top:20px;">
+                <div class="ai-header">
+                    <h4 style="white-space: nowrap;">✨ Performer Tracker Insights</h4>
+                    <button class="btn btn-sm btn-primary" id="btn-ai-low-high-performance">Generate Insight</button>
+                </div>
+                <div id="ai-content-low-high-performance" class="ai-body ai-insight-content">
+                    <p>Click Generate Insight for performance analysis</p>
+                </div>
+            </div>
         </div>
- 
+
         <!-- ══════════════ PANEL 2: Top Talent ══════════════ -->
         <div class="ud-perf-panel" id="udp-top">
- 
-            <!-- Top Performers ≥ 4.0 -->
             <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin:0 0 8px;">
                 🥇 Top Performers — Score ≥ 4.0
                 <span style="font-size:11px;font-weight:400;color:#868e96;margin-left:8px;">(${perfTopList.length} employees)</span>
@@ -1461,8 +2943,8 @@ let pipBannerText = perfCritical.length
                         <th>Grade</th>
                         <th>Unit</th>
                         <th>Division</th>
-                        <th style="text-align:center;">Score</th>
                         <th style="text-align:center;">Self Score</th>
+                        <th style="text-align:center;">Score</th>
                         <th style="min-width:120px;">Score Bar</th>
                         <th>Band</th>
                         <th>Status</th>
@@ -1471,32 +2953,6 @@ let pipBannerText = perfCritical.length
                     <tbody>${topTableRows}</tbody>
                 </table>
             </div>
- 
-            <!-- Strong Performers 3.5–4.0 -->
-            <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin:0 0 8px;">
-                💪 Strong Performers — Score 3.5–4.0
-                <span style="font-size:11px;font-weight:400;color:#868e96;margin-left:8px;">(${perfStrongList.length} employees)</span>
-            </div>
-            <div style="overflow-x:auto;margin-bottom:22px;">
-                <table class="ud-table">
-                    <thead><tr>
-                        <th style="width:36px;">#</th>
-                        <th>Employee</th>
-                        <th>Grade</th>
-                        <th>Unit</th>
-                        <th>Division</th>
-                        <th style="text-align:center;">Score</th>
-                        <th style="text-align:center;">Self Score</th>
-                        <th style="min-width:120px;">Score Bar</th>
-                        <th>Band</th>
-                        <th>Status</th>
-                        <th>Action</th>
-                    </tr></thead>
-                    <tbody>${strongTableRows}</tbody>
-                </table>
-            </div>
- 
-            <!-- Succession & Retention Risk -->
             <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin:0 0 8px;">
                 🔄 Succession &amp; Retention Risk — All Top &amp; Strong Performers
             </div>
@@ -1504,7 +2960,7 @@ let pipBannerText = perfCritical.length
                 <div class="pbb-title">⚠ Retention Watch</div>
                 <div>${retBannerText}</div>
             </div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Employee</th>
@@ -1520,19 +2976,41 @@ let pipBannerText = perfCritical.length
                 </table>
             </div>
         </div>
- 
+
+        <!-- ══════════════ PANEL 2b: Middle Performers ══════════════ -->
+        <div class="ud-perf-panel" id="udp-middle">
+            <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin:0 0 8px;">
+                🟠 Middle Performers — Score 3.0–3.99
+                <span style="font-size:11px;font-weight:400;color:#868e96;margin-left:8px;">(${perfMiddleList.length} employees)</span>
+            </div>
+            <div style="overflow-x:auto;margin-bottom:22px;">
+                <table class="ud-table">
+                    <thead><tr>
+                        <th style="width:36px;">#</th>
+                        <th>Employee</th>
+                        <th>Grade</th>
+                        <th>Unit</th>
+                        <th>Division</th>
+                        <th style="text-align:center;">Self Score</th>
+                        <th style="text-align:center;">Score</th>
+                        <th style="min-width:120px;">Score Bar</th>
+                        <th>Band</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr></thead>
+                    <tbody>${MiddleTableRows}</tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- ══════════════ PANEL 3: Low Performers ══════════════ -->
         <div class="ud-perf-panel" id="udp-low">
- 
-            <!-- Critical alert banner -->
             <div class="ud-pip-banner">
                 <div class="pbb-title">🚨 Critical Alert</div>
                 <div>${pipBannerText}</div>
             </div>
- 
-            <!-- Low Performer List -->
             <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin:0 0 8px;">
-                📉 Low Performer Registry — Score &lt; 2.5
+                📉 Low Performer Registry — Score &lt; 3.0
                 <span style="font-size:11px;font-weight:400;color:#868e96;margin-left:8px;">(${perfLowList.length} employees)</span>
             </div>
             <div style="overflow-x:auto;margin-bottom:22px;">
@@ -1543,8 +3021,8 @@ let pipBannerText = perfCritical.length
                         <th>Grade</th>
                         <th>Unit</th>
                         <th>Division</th>
-                        <th style="text-align:center;">Score</th>
                         <th style="text-align:center;">Self Score</th>
+                        <th style="text-align:center;">Score</th>
                         <th style="min-width:120px;">Score Bar</th>
                         <th>Band</th>
                         <th>Status</th>
@@ -1554,37 +3032,22 @@ let pipBannerText = perfCritical.length
                     <tbody>${lowTableRows}</tbody>
                 </table>
             </div>
- 
-            <!-- PIP Tracker -->
-            <!-- <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin:0 0 8px;">
-                📋 Performance Improvement Plan (PIP) Tracker
-            </div>
-            <div style="overflow-x:auto;">
-                <table class="ud-table">
-                    <thead><tr>
-                        <th>Employee</th>
-                        <th>Unit</th>
-                        <th>Division</th>
-                        <th>Grade</th>
-                        <th style="text-align:center;">Score</th>
-                        <th>Appraisal Status</th>
-                        <th style="text-align:center;">Risk Level</th>
-                        <th>PIP Status</th>
-                        <th>Action</th>
-                    </tr></thead>
-                    <tbody>${pipRows}</tbody>
-                </table>
-            </div>
-             -->
         </div>
- 
+
     </div>
 </div>`;
+
+
 
 let histHtml = `
 <div class="ud-section" id="ud-hist-section">
     <div class="ud-section-header ud-toggle" data-target="ud-body-hist">
-        <h4>📅 Historical Performance Tracking — ${unitLabel}</h4>
+            <h4 style="white-space: nowrap;">📅 Historical Performance Tracking — ${unitLabel}</h4>
+
+        <div class="ud-section-desc">
+            <strong>Historical Performance Tracking</strong> shows grade distribution trends over multiple appraisal years sourced from Employee Previous Ratings.
+            Use <strong>Year-on-Year</strong> to spot overall trends, <strong>Unit Comparison</strong> for benchmarking, and the <strong>Heatmap</strong> to identify consistently underperforming units.
+        </div>
         <span class="ud-toggle-icon">▼</span>
     </div>
     <div class="ud-section-body ud-collapsible-body" id="ud-body-hist">
@@ -1594,12 +3057,27 @@ let histHtml = `
         </div>
         <div id="ud-hist-content" style="display:none;"></div>
         <div id="ud-hist-empty"   style="display:none;padding:20px;text-align:center;color:#adb5bd;font-size:13px;"></div>
+        <div class="ai-insight-card" style="margin-top:20px;">
+            <div class="ai-header">
+                <h4 style="white-space: nowrap;">✨ Historical Performance Insights</h4>
+                <button class="btn btn-sm btn-primary" id="btn-ai-historical-performance">Generate Insight</button>
+            </div>
+            <div id="ai-content-historical-performance" class="ai-body ai-insight-content">
+                <p>Click Generate Insight for historical performance analysis<p>
+            </div>
+        </div>
     </div>
 </div>`;
 let ldHtml = `
 <div class="ud-section" id="ud-ld-section">
     <div class="ud-section-header ud-toggle" data-target="ud-body-ld">
-        <h4>🎓 Learning &amp; Development — ${unitLabel}</h4>
+            <h4 style="white-space: nowrap;">🎓 Learning &amp; Development — ${unitLabel}</h4>
+
+        <div class="ud-section-desc">
+    <strong>Learning &amp; Development</strong> identifies skill gaps from competency assessor scores and recommends training programs.
+    <strong>Critical gap</strong>: avg assessor score ≤ 2.0. <strong>Moderate</strong>: 2.0–3.0. <strong>On Track</strong>: &gt; 3.0.
+    The Completion Linkage tab connects appraisal outcomes to L&amp;D effectiveness. The Matrix shows gaps per unit per competency.
+</div>
         <span class="ud-toggle-icon">▼</span>
     </div>
     <div class="ud-section-body ud-collapsible-body" id="ud-body-ld">
@@ -1607,6 +3085,15 @@ let ldHtml = `
             <span class="spinner-border spinner-border-sm"></span> Loading L&amp;D data...
         </div>
         <div id="ud-ld-body"></div>
+        <div class="ai-insight-card" style="margin-top:20px;">
+            <div class="ai-header">
+                <h4 style="white-space: nowrap;">✨ Learning & Development Insights</h4>
+                <button class="btn btn-sm btn-primary" id="btn-ai-learning-development">Generate Insight</button>
+            </div>
+            <div id="ai-content-learning-development" class="ai-body ai-insight-content">
+                <p>Click Generate Insight for learning & development analysis<p>
+            </div>
+        </div>
     </div>
 </div>`;
 
@@ -1630,7 +3117,7 @@ let ldHtml = `
             let empHtml = `
             <div class="ud-section large">
                 <div class="ud-section-header ud-toggle" data-target="ud-body-emp">
-                    <h4>👤 Employee Detail — ${unitLabel} (${total} records)</h4><span class="ud-toggle-icon">▼</span>
+                    <h4 style="white-space: nowrap;">👤 Employee Detail — ${unitLabel} (${total} records)</h4><span class="ud-toggle-icon">▼</span>
                 </div>
                 <div class="ud-section-body ud-collapsible-body" id="ud-body-emp" style="overflow-x:auto;">
                     <table class="ud-table" style="min-width:800px;">
@@ -1723,7 +3210,7 @@ data.forEach(d => {
     cu.total++;
     if (['Approved','Accepted'].includes(d.workflow_state)) cu.completed++;
     if (d.custom_appraisal_status === 'Overdue') cu.overdue++;
-    if (!d.custom_total_self_score || parseFloat(d.custom_total_self_score) === 0) cu.noSelfScore++;
+        if (((!d.custom_total_self_score && (d.workflow_state != 'Draft'))  || (parseFloat(d.custom_total_self_score) === 0 && (d.workflow_state != 'Draft'))) && !['A1','A2','A3','A4'].includes(d.custom_grade || '')) cu.noSelfScore++;
 
     // Policy deviation: draft for > 30 days (using modified date)
     let modDate = (d.modified || '').split(' ')[0];
@@ -1731,10 +3218,9 @@ data.forEach(d => {
         let daysDiff = Math.floor(
             (new Date() - new Date(modDate)) / (1000 * 60 * 60 * 24)
         );
-        if (daysDiff > 30) {
-            cu.longDraft++;
-            cu.deviations.push(`${d.employee_name||d.employee} — stalled ${daysDiff}d`);
-        }
+        cu.longDraft++;
+        cu.deviations.push(`${d.employee_name||d.employee} — stalled ${daysDiff}d`);
+        
     }
 });
 
@@ -1756,9 +3242,9 @@ data.forEach(d => {
         issues.push({ type: 'Overdue', cls: 'ud-policy-overdue' });
     if (!['Approved','Accepted'].includes(d.workflow_state))
         issues.push({ type: 'Not Completed', cls: 'ud-policy-incomplete' });
-    if (!d.custom_total_self_score || parseFloat(d.custom_total_self_score) === 0)
+    if (((!d.custom_total_self_score && (d.workflow_state != 'Draft'))  || (parseFloat(d.custom_total_self_score) === 0 && (d.workflow_state != 'Draft'))) && !['A1','A2','A3','A4'].includes(d.custom_grade || ''))
         issues.push({ type: 'No Self Score', cls: 'ud-policy-no-self' });
-    if ((d.workflow_state || '').toLowerCase() === 'draft') {
+    if ((d.workflow_state || '') === 'Draft') {
         let modDate = (d.modified || '').split(' ')[0];
         if (modDate) {
             let daysDiff = Math.floor(
@@ -1784,9 +3270,10 @@ let complianceUnitRows = Object.keys(complianceUnitMap).sort().map(u => {
         <td style="font-weight:700;">${u}</td>
         <td style="text-align:center;">${cu.total}</td>
         <td style="text-align:center;color:#28a745;font-weight:700;">${cu.completed}</td>
+        <td style="text-align:center;color:#e6a800;font-weight:700;">${cu.longDraft}</td>
         <td style="text-align:center;color:#C8102E;font-weight:700;">${cu.overdue}</td>
         <td style="text-align:center;color:#495057;">${cu.noSelfScore}</td>
-        <td style="text-align:center;color:#e6a800;font-weight:700;">${cu.longDraft}</td>
+        
         <td>
             <div class="ud-compliance-bar-wrap">
                 <div class="ud-compliance-meter">
@@ -1802,6 +3289,36 @@ let complianceUnitRows = Object.keys(complianceUnitMap).sort().map(u => {
         </td>
     </tr>`;
 }).join('');
+
+window.policyComplianceData = Object.keys(complianceUnitMap)
+.sort()
+.map(unit => {
+
+    const cu = complianceUnitMap[unit];
+
+    const complianceRate = cu.total
+        ? Math.round((cu.completed / cu.total) * 100)
+        : 0;
+
+    let riskStatus = "Compliant";
+
+    if (cu.overdue > 0) {
+        riskStatus = "At Risk";
+    } else if (cu.completed < cu.total) {
+        riskStatus = "In Progress";
+    }
+
+    return {
+        unit: unit,
+        total_appraisals: cu.total,
+        completed: cu.completed,
+        overdue: cu.overdue,
+        no_self_score: cu.noSelfScore,
+        long_draft: cu.longDraft,
+        compliance_rate: complianceRate,
+        risk_status: riskStatus
+    };
+});
 
 // Policy deviation rows (top 50)
 let policyDevRows = policyDeviations.slice(0, 50).map(({ d, issues }) => {
@@ -1830,7 +3347,12 @@ let policyDevRows = policyDeviations.slice(0, 50).map(({ d, issues }) => {
 let complianceHtml = `
 <div class="ud-section">
     <div class="ud-section-header ud-toggle" data-target="ud-body-compliance">
-        <h4>🛡 Compliance Dashboard — ${unitLabel}</h4>
+    <h4 style="white-space: nowrap;">🛡 Compliance Dashboard — ${unitLabel}</h4>
+        <div class="ud-section-desc">
+    <strong>Compliance Dashboard</strong> monitors appraisal policy adherence across units.
+    Flags include: <strong>Overdue</strong> (past deadline), <strong>No Self Score</strong> (employee skipped self-assessment),
+    and <strong>Stalled Draft &gt;30 days</strong> (inactive appraisal). Fully Compliant = all completed with no overdue.
+</div>
         <span class="ud-toggle-icon">▼</span>
     </div>
     <div class="ud-section-body ud-collapsible-body" id="ud-body-compliance">
@@ -1846,10 +3368,10 @@ let complianceHtml = `
                 <div class="ckl">Policy Deviations</div>
             </div>
             <div class="ud-comp-dash-kpi c-navy">
-              
+                <div class="ckv">${unitsNotStarted}</div>
                 <div class="ckl">Units Not Started</div>
             </div>
-            <div class="ud-comp-dash-kpi c-green">
+            <div class="ud-comp-dash-kpi cg-green">
                 <div class="ckv">${fullyCompliantUnits} / ${totalUnits}</div>
                 <div class="ckl">Fully Compliant Units</div>
             </div>
@@ -1881,17 +3403,28 @@ let complianceHtml = `
             <table class="ud-table">
                 <thead><tr>
                     <th>Unit</th>
-                    <th style="text-align:center;">Total</th>
-                    <th style="text-align:center;">Completed</th>
-                    <th style="text-align:center;">Overdue</th>
-                    <th style="text-align:center;">No Self Score</th>
-                    <th style="text-align:center;">Stalled (&gt;30d)</th>
-                    <th>Completion Rate</th>
-                    <th style="text-align:center;">Status</th>
+                    <th style="text-align:center;">Total ${ud_thEye('Total','All appraisals for this unit regardless of status.','COUNT(appraisals WHERE unit = U)','')}</th>
+                    <th style="text-align:center;">Completed ${ud_thEye('Completed','Appraisals in Approved or Accepted state.','COUNT WHERE workflow_state IN [Approved, Accepted]','')}</th>
+                    <th style="text-align:center;">Pending ${ud_thEye('Pending','Appraisals not yet completed (Total − Completed).','Total − Completed','')}</th>
+                    <th style="text-align:center;">Overdue ${ud_thEye('Overdue','Appraisals flagged Overdue — past rollout deadline.','COUNT WHERE custom_appraisal_status = Overdue','')}</th>
+                    <th style="text-align:center;">No Self Score ${ud_thEye('No Self Score','Non-worker employees (grade not A1–A4) who have submitted their appraisal but have no self score filled in.','COUNT WHERE custom_total_self_score IS NULL OR = 0\nAND grade NOT IN [A1,A2,A3,A4]\nAND workflow_state != Draft','e.g. 5 staff employees submitted appraisal without self-assessment')}</th>
+                    <th>Completion Rate ${ud_thEye('Completion Rate','Percentage of appraisals completed in this unit.','(Completed ÷ Total) × 100%\n≥ 80% → green\n≥ 50% → amber\n< 50% → red','e.g. 32 ÷ 45 = 71% → amber')}</th>
+                    <th style="text-align:center;">Status ${ud_thEye('Status','Overall compliance status for this unit.','At Risk: overdue > 0\nIn Progress: completed < total\nCompliant: all completed, no overdue','')}</th>
                 </tr></thead>
                 <tbody>${complianceUnitRows}</tbody>
             </table>
+            
         </div>
+        
+    <div class="ai-insight-card" style="margin-top:20px;">
+        <div class="ai-header">
+            <h4 style="white-space: nowrap;">✨ Compliance Status Insights</h4>
+            <button class="btn btn-sm btn-primary" id="btn-ai-compliance-status">Generate Insight</button>
+        </div>
+        <div id="ai-content-compliance-status" class="ai-body ai-insight-content">
+            <p>Click Generate Insight for compliance status analysis<p>
+        </div>
+    </div>
  
         <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin-bottom:8px;">
             ⚠ Policy Deviations — Employee Level
@@ -1909,23 +3442,34 @@ let complianceHtml = `
                  ${data.filter(d => d.custom_appraisal_status==='Overdue').length} are overdue.
                  Review and remediate urgently.</div>
         </div>
-        <div style="overflow-x:auto;">
-            <table class="ud-table">
-                <thead><tr>
-                    <th>Employee</th>
-                    <th>Unit</th>
-                    <th>Division</th>
-                    <th>Grade</th>
-                    <th>Violations</th>
-                    <th>Action</th>
-                </tr></thead>
-                <tbody>${policyDevRows}</tbody>
-            </table>
+<div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+    <table class="ud-table">
+        <thead><tr>
+            <th>Employee</th>
+            <th>Unit</th>
+            <th>Division</th>
+            <th>Grade</th>
+            <th>Violations</th>
+            <th>Action</th>
+        </tr></thead>
+        <tbody id="ud-policy-dev-tbody"></tbody>
+    </table>
+</div>
+<div id="ud-policy-dev-pagination" style="display:none;align-items:center;justify-content:space-between;padding:10px 4px;margin-top:4px;border-top:1px solid #e9ecef;">
+    <button id="ud-pd-prev" style="padding:5px 14px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;cursor:pointer;color:#495057;">◀ Prev</button>
+    <span id="ud-pd-page-info" style="font-size:12px;color:#868e96;"></span>
+    <button id="ud-pd-next" style="padding:5px 14px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;cursor:pointer;color:#495057;">Next ▶</button>
+</div>
+${policyDeviations.length > 50 ? `<div style="text-align:center;padding:8px;font-size:11px;color:#868e96;">Showing max 200 of ${policyDeviations.length} violations</div>` : ''}`}
+    <div class="ai-insight-card" style="margin-top:20px;">
+        <div class="ai-header">
+            <h4 style="white-space: nowrap;">✨ Policy Deviation Insights</h4>
+            <button class="btn btn-sm btn-primary" id="btn-ai-policy-deviation">Generate Insight</button>
         </div>
-        ${policyDeviations.length > 50 ? `
-        <div style="text-align:center;padding:8px;font-size:11px;color:#868e96;">
-            Showing 50 of ${policyDeviations.length} violations
-        </div>` : ''}`}
+        <div id="ai-content-policy-deviation" class="ai-body ai-insight-content">
+            <p>Click Generate Insight for policy deviation analysis<p>
+        </div>
+    </div>
     </div>
 </div>`;
  
@@ -1995,21 +3539,86 @@ calibData.forEach(d => {
     else if (post < pre) calibUnitMap[u].down++;
     else calibUnitMap[u].flat++;
 });
-
-let calibUnitRows = Object.keys(calibUnitMap).sort().map(u => {
-    let cu    = calibUnitMap[u];
-    let n     = cu.pre.length;
-    let avgP  = (cu.pre.reduce((a,b) => a+b, 0) / n).toFixed(2);
-    let avgQ  = (cu.post.reduce((a,b) => a+b, 0) / n).toFixed(2);
-    let delta = (parseFloat(avgQ) - parseFloat(avgP)).toFixed(2);
-    let dCls  = delta > 0 ? 'ud-delta-up' : delta < 0 ? 'ud-delta-down' : 'ud-delta-flat';
-    let dLabel = delta > 0 ? `▲ +${delta}` : delta < 0 ? `▼ ${delta}` : `= ${delta}`;
+let calibUnitRows = Object.keys(calibUnitMap).sort().map((u, idx) => {
+    let cu     = calibUnitMap[u];
+    let n      = cu.pre.length;
+    let avgP   = (cu.pre.reduce((a,b) => a+b, 0) / n).toFixed(2);
+    let avgQ   = (cu.post.reduce((a,b) => a+b, 0) / n).toFixed(2);
+    let delta  = (parseFloat(avgQ) - parseFloat(avgP)).toFixed(2);
+    let dCls   = delta > 0 ? 'ud-delta-up' : delta < 0 ? 'ud-delta-down' : 'ud-delta-flat';
+    let dLabel = delta > 0 ? `▲ +${delta}` : delta < 0 ? `▼ ${delta}` : `= 0.00`;
     let upPct  = Math.round((cu.up   / n) * 100);
     let downPct= Math.round((cu.down / n) * 100);
     let flatPct= 100 - upPct - downPct;
-    return `<tr>
-        <td style="font-weight:700;">${u}</td>
-        <td style="text-align:center;">${n}</td>
+
+    // Build employee rows for this unit
+    let unitEmployees = calibData.filter(d => (d.custom_unit || 'Unknown') === u);
+    let empRowsHtml = unitEmployees.map(d => {
+        let pre       = parseFloat(d.custom_total_self_score);
+        let post      = parseFloat(d.total_score);
+        let emp_delta = (post - pre).toFixed(2);
+        let empDCls   = emp_delta > 0 ? 'ud-delta-up' : emp_delta < 0 ? 'ud-delta-down' : 'ud-delta-flat';
+        let empDLabel = emp_delta > 0 ? `▲ +${emp_delta}` : emp_delta < 0 ? `▼ ${emp_delta}` : `= 0.00`;
+        let preW  = Math.round((pre  / 5) * 100);
+        let postW = Math.round((post / 5) * 100);
+        return `<tr id="ud-calib-emp-row-${idx}" style="display:none;background:#f8f9fa;">
+            <td style="padding-left:32px;font-size:11px;">
+                <div style="font-weight:700;">${d.employee_name || d.employee}</div>
+                <div style="font-size:10px;color:#868e96;">${d.employee}</div>
+            </td>
+            <td style="text-align:center;">
+                <span class="ud-badge ud-badge-blue">${d.custom_grade || '—'}</span>
+            </td>
+            <td colspan="2">
+                <div style="display:flex;align-items:center;gap:5px;">
+                    <div class="ud-prog" style="flex:1;">
+                        <div class="ud-prog-fill" style="width:${preW}%;background:#C8102E;
+                            -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+                    </div>
+                    <span style="font-size:10px;font-weight:700;color:#C8102E;min-width:28px;">${pre.toFixed(2)}</span>
+                    <span style="color:#adb5bd;font-size:10px;">→</span>
+                    <div class="ud-prog" style="flex:1;">
+                        <div class="ud-prog-fill" style="width:${postW}%;background:#0f1f3d;
+                            -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+                    </div>
+                    <span style="font-size:10px;font-weight:700;color:#0f1f3d;min-width:28px;">${post.toFixed(2)}</span>
+                </div>
+            </td>
+            <td style="text-align:center;">
+                <span class="ud-delta-chip ${empDCls}">${empDLabel}</span>
+            </td>
+            <td colspan="2" style="text-align:center;">
+                ${['Approved','Accepted'].includes(d.workflow_state)
+                    ? '<span class="ud-badge ud-badge-green">Completed</span>'
+                    : d.custom_appraisal_status === 'Overdue'
+                        ? '<span class="ud-badge ud-badge-red">Overdue</span>'
+                        : '<span class="ud-badge ud-badge-orange">Pending</span>'}
+            </td>
+            <td colspan="2">
+                <button class="ud-perf-action ud-act-view"
+                    onclick="frappe.set_route('Form','Appraisal','${d.name}')">View</button>
+            </td>
+        </tr>`;
+    }).join('');
+
+    return `
+    <!-- Unit summary row -->
+    <tr style="cursor:pointer;background:#fff;"
+        onclick="(function(el){
+            var rows = document.querySelectorAll('#ud-calib-emp-row-${idx}');
+            var icon = document.getElementById('ud-calib-icon-${idx}');
+            var isOpen = rows.length && rows[0].style.display !== 'none';
+            rows.forEach(function(r){ r.style.display = isOpen ? 'none' : ''; });
+            if(icon) icon.textContent = isOpen ? '▶' : '▼';
+        })(this)"
+        onmouseover="this.style.background='#fce8ec'"
+        onmouseout="this.style.background='#fff'">
+        <td style="font-weight:700;">
+            <span id="ud-calib-icon-${idx}" style="font-size:10px;color:#868e96;margin-right:6px;">▶</span>
+            ${u}
+            <span style="font-size:10px;font-weight:400;color:#868e96;margin-left:6px;">${n} employee${n !== 1 ? 's' : ''}</span>
+        </td>
+        <td style="text-align:center;font-weight:700;">${n}</td>
         <td style="text-align:center;font-weight:700;color:#C8102E;">${avgP}</td>
         <td style="text-align:center;font-weight:700;color:#0f1f3d;">${avgQ}</td>
         <td style="text-align:center;">
@@ -2017,28 +3626,84 @@ let calibUnitRows = Object.keys(calibUnitMap).sort().map(u => {
         </td>
         <td style="text-align:center;color:#28a745;font-weight:700;">${cu.up}</td>
         <td style="text-align:center;color:#C8102E;font-weight:700;">${cu.down}</td>
-        <td style="text-align:center;color:#868e96;">${cu.flat}</td>
+        <td style="text-align:center;color:#868e96;font-weight:700;">${cu.flat}</td>
         <td>
-            <div class="ud-calib-diff-bar">
-                <div class="ud-calib-diff-seg"
-                     style="width:${upPct}%;background:#28a745;
+            <div style="display:flex;gap:2px;height:10px;border-radius:4px;overflow:hidden;min-width:80px;">
+                <div style="width:${upPct}%;background:#28a745;
                             -webkit-print-color-adjust:exact;print-color-adjust:exact;"
                      title="Rated Up ${upPct}%"></div>
-                <div class="ud-calib-diff-seg"
-                     style="width:${flatPct}%;background:#868e96;
+                <div style="width:${flatPct}%;background:#868e96;
                             -webkit-print-color-adjust:exact;print-color-adjust:exact;"
                      title="No Change ${flatPct}%"></div>
-                <div class="ud-calib-diff-seg"
-                     style="width:${downPct}%;background:#C8102E;
+                <div style="width:${downPct}%;background:#C8102E;
                             -webkit-print-color-adjust:exact;print-color-adjust:exact;"
                      title="Rated Down ${downPct}%"></div>
             </div>
         </td>
-    </tr>`;
-}).join('') || `<tr><td colspan="9"
-    style="text-align:center;padding:20px;color:#adb5bd;">
-    No calibration data (requires both self score and assessor score)
-</td></tr>`;
+    </tr>
+    <tr id="ud-calib-emp-row-${idx}" style="display:none;background:#e9ecef;">
+        <td style="padding-left:32px;font-size:10px;font-weight:700;color:#495057;letter-spacing:.4px;">EMPLOYEE</td>
+        <td style="font-size:10px;font-weight:700;color:#495057;text-align:center;">GRADE</td>
+        <td colspan="2" style="font-size:10px;font-weight:700;color:#495057;">🔴 SELF → 🔵 ASSESSOR</td>
+        <td style="font-size:10px;font-weight:700;color:#495057;text-align:center;">Δ CHANGE</td>
+        <td colspan="2" style="font-size:10px;font-weight:700;color:#495057;text-align:center;">STATUS</td>
+        <td colspan="2" style="font-size:10px;font-weight:700;color:#495057;">ACTION</td>
+    </tr>
+    ${empRowsHtml}
+    `;
+}).join('') || `<tr><td colspan="9" style="text-align:center;padding:20px;color:#adb5bd;">No calibration data</td></tr>`;
+
+
+window.calibrationData = Object.keys(calibUnitMap)
+    .sort()
+    .map(unit => {
+        const cu = calibUnitMap[unit];
+        const count = cu.pre.length;
+
+        const avgPreScore = Number(
+            (cu.pre.reduce((a, b) => a + b, 0) / count).toFixed(2)
+        );
+
+        const avgPostScore = Number(
+            (cu.post.reduce((a, b) => a + b, 0) / count).toFixed(2)
+        );
+
+        const avgShift = Number(
+            (avgPostScore - avgPreScore).toFixed(2)
+        );
+
+        const upPct = Number(
+            ((cu.up / count) * 100).toFixed(1)
+        );
+
+        const downPct = Number(
+            ((cu.down / count) * 100).toFixed(1)
+        );
+
+        const noChangePct = Number(
+            ((cu.flat / count) * 100).toFixed(1)
+        );
+
+        return {
+            unit: unit,
+            employees_calibrated: count,
+            average_self_score: avgPreScore,
+            average_assessor_score: avgPostScore,
+            average_score_shift: avgShift,
+            ratings_increased: cu.up,
+            ratings_decreased: cu.down,
+            ratings_unchanged: cu.flat,
+            increase_percentage: upPct,
+            decrease_percentage: downPct,
+            unchanged_percentage: noChangePct,
+            calibration_trend:
+                avgShift > 0
+                    ? "Overall Increased"
+                    : avgShift < 0
+                    ? "Overall Decreased"
+                    : "Stable"
+        };
+    });
 
 // Individual calibration rows — biggest gaps
 let calibIndivRows = [...calibData]
@@ -2089,11 +3754,40 @@ let calibIndivRows = [...calibData]
         No individual calibration data
     </td></tr>`;
 
+window.calibrationIndividualData = [...calibData]
+    .map(d => {
+        const selfScore = parseFloat(d.custom_total_self_score || 0);
+        const calibratedScore = parseFloat(d.total_score || 0);
+        const delta = calibratedScore - selfScore;
+
+        return {
+            employee_id: d.employee,
+            employee_name: d.employee_name,
+            unit: d.custom_unit || "N/A",
+            grade: d.custom_grade || "N/A",
+            self_score: Number(selfScore.toFixed(2)),
+            calibrated_score: Number(calibratedScore.toFixed(2)),
+            score_change: Number(delta.toFixed(2)),
+            calibration_direction:
+                delta > 0
+                    ? "Increased"
+                    : delta < 0
+                    ? "Decreased"
+                    : "No Change"
+        };
+    })
+    .sort((a, b) => Math.abs(b.score_change) - Math.abs(a.score_change))
+    .slice(0, 30);
  
 let calibrationHtml = `
 <div class="ud-section">
     <div class="ud-section-header ud-toggle" data-target="ud-body-calibration">
-        <h4>🎯 Calibration Summary — ${unitLabel}</h4>
+    <h4 style="white-space: nowrap;">🎯 Calibration Summary — ${unitLabel}</h4>
+    <div class="ud-section-desc">
+    <strong>Calibration Summary</strong> compares pre-calibration (employee self-score) vs post-calibration (assessor score) across all appraisals.
+    <strong>Rated Up</strong> = assessor scored higher than self. <strong>Rated Down</strong> = assessor scored lower.
+    The scatter chart shows the distribution of self vs assessor scores. Click unit rows to expand individual employee details.
+</div>
         <span class="ud-toggle-icon">▼</span>
     </div>
     <div class="ud-section-body ud-collapsible-body" id="ud-body-calibration">
@@ -2154,30 +3848,43 @@ let calibrationHtml = `
             </div>
         </div>`}
  
+       
         <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin-bottom:8px;">
             🏢 Unit-wise Calibration Summary
+            <span style="font-size:10px;font-weight:400;color:#868e96;margin-left:8px;">
+                Click any unit row to expand employee details
+            </span>
         </div>
         <div style="overflow-x:auto;margin-bottom:18px;">
             <table class="ud-table">
                 <thead><tr>
                     <th>Unit</th>
-                    <th style="text-align:center;">Count</th>
-                    <th style="text-align:center;">🔴 Avg Pre</th>
-                    <th style="text-align:center;">🔵 Avg Post</th>
-                    <th style="text-align:center;">Δ Delta</th>
-                    <th style="text-align:center;">Rated Up</th>
-                    <th style="text-align:center;">Rated Down</th>
-                    <th style="text-align:center;">No Change</th>
-                    <th style="min-width:100px;">Calibration Mix</th>
+                    <th style="text-align:center;">Count ${ud_thEye('Count','Employees with both self score and assessor score filled.','COUNT(appraisals WHERE self_score > 0 AND total_score > 0)','')}</th>
+                    <th style="text-align:center;">🔴 Avg Pre ${ud_thEye('Avg Pre (Self Score)','Average employee self-assessment score — the pre-calibration baseline.','SUM(custom_total_self_score) / COUNT','')}</th>
+                    <th style="text-align:center;">🔵 Avg Post ${ud_thEye('Avg Post (Assessor Score)','Average assessor score — the post-calibration result.','SUM(total_score) / COUNT','')}</th>
+                    <th style="text-align:center;">Δ Delta ${ud_thEye('Δ Delta','Post minus Pre. Positive = assessor rated higher than self (upward calibration). Negative = assessor rated lower.','Avg Post − Avg Pre\n▲ positive = assessor inflated\n▼ negative = assessor deflated','e.g. Post 3.8 − Pre 4.2 = −0.4 → assessor rated down')}</th>
+                    <th style="text-align:center;">Rated Up ${ud_thEye('Rated Up','Employees whose assessor score is strictly higher than their self score.','COUNT(total_score > custom_total_self_score)','')}</th>
+                    <th style="text-align:center;">Rated Down ${ud_thEye('Rated Down','Employees whose assessor score is strictly lower than their self score.','COUNT(total_score < custom_total_self_score)','')}</th>
+                    <th style="text-align:center;">No Change ${ud_thEye('No Change','Employees whose assessor score equals their self score exactly.','COUNT(total_score = custom_total_self_score)','')}</th>
+                    <th style="min-width:100px;">Calibration Mix ${ud_thEye('Calibration Mix','Visual bar showing proportion of Up / No Change / Down within the unit. Gold = Up, Grey = No Change, Red = Down.','Stacked bar: (Up% | NoChange% | Down%) = 100%','')}</th>
                 </tr></thead>
                 <tbody>${calibUnitRows}</tbody>
             </table>
+            <div class="ai-insight-card" style="margin-top:20px;">
+                <div class="ai-header">
+                    <h4 style="white-space: nowrap;">✨ Calibration Insights</h4>
+                    <button class="btn btn-sm btn-primary" id="btn-ai-calibration">Generate Insight</button>
+                </div>
+                <div id="ai-content-calibration" class="ai-body ai-insight-content">
+                    <p>Click Generate Insight for calibration analysis<p>
+                </div>
+            </div>
         </div>
  
         <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin-bottom:8px;">
             📊 Biggest Calibration Shifts — Top 30 by Absolute Δ
         </div>
-        <div style="overflow-x:auto;">
+        <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
             <table class="ud-table">
                 <thead><tr>
                     <th>Employee</th>
@@ -2191,13 +3898,79 @@ let calibrationHtml = `
                 <tbody>${calibIndivRows}</tbody>
             </table>
         </div>
+        <div class="ai-insight-card" style="margin-top:20px;">
+            <div class="ai-header">
+                <h4 style="white-space: nowrap;">✨ Shift Calibration Insights</h4>
+                <button class="btn btn-sm btn-primary" id="btn-ai-shift-calibration">Generate Insight</button>
+            </div>
+            <div id="ai-content-shift-calibration" class="ai-body ai-insight-content">
+                <p>Click Generate Insight for shift calibration analysis<p>
+            </div>
+        </div>
     </div>
 </div>`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  SECTION C: PERFORMANCE vs COMPENSATION
 // ─────────────────────────────────────────────────────────────────────────────
+$('head').append(`<style id="ud-sticky-header-styles">
+/* ── Sticky table headers for scrollable sections ── */
 
+/* Wrapper that creates the scrollable viewport */
+.ud-table-scroll-wrap {
+    overflow-y: auto;
+    max-height: 520px;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+}
+
+/* Make thead sticky inside any scrollable wrapper */
+.ud-table-scroll-wrap .ud-table thead th,
+.ud-table-scroll-wrap .ud-table thead tr th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #0f1f3d !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    /* Prevent header gap/bleed on scroll */
+    box-shadow: 0 2px 4px rgba(0,0,0,.15);
+}
+
+/* For kra-group-header rows that also appear in thead-like rows */
+.ud-table-scroll-wrap .ud-table tr.kra-group-header td {
+    position: sticky;
+    top: 41px; /* offset by thead height */
+    z-index: 9;
+}
+
+/* Scrollbar styling */
+.ud-table-scroll-wrap::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+.ud-table-scroll-wrap::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+.ud-table-scroll-wrap::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+}
+.ud-table-scroll-wrap::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+@media print {
+    .ud-table-scroll-wrap {
+        overflow: visible !important;
+        max-height: none !important;
+    }
+    .ud-table-scroll-wrap .ud-table thead th {
+        position: static !important;
+    }
+}
+</style>`);
 $('head').append(`<style id="ud-pvc-styles">
     .ud-pvc-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:16px; }
     .ud-pvc-kpi  { background:#fff; border-radius:8px; padding:12px 14px; text-align:center;
@@ -2312,6 +4085,32 @@ let pvcUnitRows = Object.keys(pvcUnitMap).sort().map(u => {
     No scored appraisals
 </td></tr>`;
 
+window.payForPerformanceData = Object.keys(pvcUnitMap)
+    .sort()
+    .map(unit => {
+        const pu = pvcUnitMap[unit];
+        const count = pu.scores.length;
+
+        const avgScore = Number(
+            (pu.scores.reduce((a, b) => a + b, 0) / count).toFixed(2)
+        );
+
+        const recommendation = incrRecommendation(avgScore);
+
+        return {
+            unit: unit,
+            employees_scored: count,
+            average_score: avgScore,
+            exceptional_performers: pu.exceptional,
+            high_performers: pu.high,
+            standard_performers: pu.standard,
+            low_performers: pu.low,
+            hold_performers: pu.hold,
+            pip_performers: pu.pip,
+            recommended_increment_band: recommendation.label
+        };
+    });
+
 // Individual increment recommendation rows (top performers + PIP employees)
 let incrRows = [...pvcScored]
     .sort((a, b) => parseFloat(b.total_score) - parseFloat(a.total_score))
@@ -2356,11 +4155,32 @@ let incrRows = [...pvcScored]
         No scored appraisals
     </td></tr>`;
 
+window.individualIncrementData = pvcScored.map(d => {
+    const score = parseFloat(d.total_score) || 0;
+    const increment = incrRecommendation(score);
+
+    return {
+        employee: d.employee,
+        employee_name: d.employee_name,
+        grade: d.custom_grade,
+        unit: d.custom_unit,
+        division: d.custom_division,
+        score: score,
+        increment_band: increment.label,
+        recommended_increment: increment.pct,
+        appraisal_status: d.workflow_state
+    };
+});
     
 let perfCompHtml = `
 <div class="ud-section">
     <div class="ud-section-header ud-toggle" data-target="ud-body-perfcomp">
-        <h4>💰 Performance vs Compensation — ${unitLabel}</h4>
+    <h4 style="white-space: nowrap;">💰 Performance vs Compensation — ${unitLabel}</h4>
+        <div class="ud-section-desc">
+    <strong>Performance vs Compensation</strong> recommends increment bands based on final appraisal scores.
+    <strong>≥4.5 → Exceptional (15%+) · ≥4.0 → High (10–15%) · ≥3.5 → Standard (5–10%) · ≥2.5 → Minimal (0–5%) · ≥2.0 → Hold · &lt;2.0 → PIP</strong>.
+    These are guidelines only — final decisions rest with HR and management.
+</div>
         <span class="ud-toggle-icon">▼</span>
     </div>
     <div class="ud-section-body ud-collapsible-body" id="ud-body-perfcomp">
@@ -2471,6 +4291,15 @@ let perfCompHtml = `
                 <tbody>${pvcUnitRows}</tbody>
             </table>
         </div>
+        <div class="ai-insight-card" style="margin-top:20px;">
+            <div class="ai-header">
+                <h4 style="white-space: nowrap;">✨ Pay-for-Performance Insights</h4>
+                <button class="btn btn-sm btn-primary" id="btn-ai-pay-for-performance">Generate Insight</button>
+            </div>
+            <div id="ai-content-pay-for-performance" class="ai-body ai-insight-content">
+                <p>Click Generate Insight for pay-for-performance analysis<p>
+            </div>
+        </div>
  
         <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin-bottom:8px;">
             👤 Individual Increment Recommendations
@@ -2478,16 +4307,16 @@ let perfCompHtml = `
                 (Top 50 by score)
             </span>
         </div>
-        <div style="overflow-x:auto;">
+        <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
             <table class="ud-table">
                 <thead><tr>
                     <th>Employee</th>
                     <th>Grade</th>
                     <th>Unit</th>
                     <th>Division</th>
-                    <th>Score Bar</th>
-                    <th>Increment Band</th>
-                    <th style="text-align:center;">Suggested %</th>
+                    <th>Score Bar ${ud_thEye('Score Bar','Visual representation of the employee final assessor score out of 5.','Bar width = (total_score / 5) × 100%','')}</th>
+                    <th>Increment Band ${ud_thEye('Increment Band','Recommended salary increment band derived from the appraisal score.','≥ 4.5 → Exceptional (15%+)\n≥ 4.0 → High (10–15%)\n≥ 3.5 → Standard (5–10%)\n≥ 2.5 → Minimal (0–5%)\n≥ 2.0 → Hold (0%)\n< 2.0 → PIP Required\n\nNote: Guidelines only — final decisions rest with HR.','e.g. Score 4.2 → High Increment band')}</th>
+                    <th style="text-align:center;">Suggested % ${ud_thEye('Suggested %','Indicative increment percentage range for this band.','Derived from band thresholds. Not a binding commitment.','e.g. High band → 10–15%')}</th>
                     <th>Action</th>
                 </tr></thead>
                 <tbody>${incrRows}</tbody>
@@ -2496,7 +4325,18 @@ let perfCompHtml = `
         ${pvcScored.length > 50 ? `
         <div style="text-align:center;padding:8px;font-size:11px;color:#868e96;">
             Showing top 50 of ${pvcScored.length} scored appraisals
-        </div>` : ''}
+        </div>
+        ` : ''}
+        
+        <div class="ai-insight-card" style="margin-top:20px;">
+            <div class="ai-header">
+                <h4 style="white-space: nowrap;">✨ Individual Increment Insights</h4>
+                <button class="btn btn-sm btn-primary" id="btn-ai-individual-increment">Generate Insight</button>
+            </div>
+            <div id="ai-content-individual-increment" class="ai-body ai-insight-content">
+                <p>Click Generate Insight for individual increment status analysis<p>
+            </div>
+        </div>
     </div>
 </div>`;
 
@@ -2588,6 +4428,30 @@ let promoRows = [...promoStrong, ...promoReady, ...promoWatch]
         No eligible employees found
     </td></tr>`;
 
+window.promotionEligibilityData = [
+    ...promoStrong,
+    ...promoReady,
+    ...promoWatch
+].map(d => {
+    const score = parseFloat(d.total_score) || 0;
+    const selfScore = parseFloat(d.custom_total_self_score) || 0;
+    const eligibility = promoEligibility(d);
+
+    return {
+        employee: d.employee,
+        employee_name: d.employee_name,
+        grade: d.custom_grade,
+        unit: d.custom_unit,
+        division: d.custom_division,
+        score: score,
+        self_score: selfScore,
+        score_gap: Number((score - selfScore).toFixed(2)),
+        eligibility_status: eligibility.label,
+        workflow_state: d.workflow_state,
+        appraisal_status: d.custom_appraisal_status
+    };
+});
+
 let eligPanelHtml = `
     <div style="font-size:11px;color:#868e96;margin-bottom:12px;">
         <strong>Strong Candidate</strong>: Score ≥ 4.0 + Assessor/Self delta ≤ 0.5 + Appraisal completed.
@@ -2636,7 +4500,7 @@ let eligPanelHtml = `
             (${promoStrong.length + promoReady.length + promoWatch.length} employees shown)
         </span>
     </div>
-    <div style="overflow-x:auto;">
+    <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
         <table class="ud-table">
             <thead><tr>
                 <th style="width:36px;">#</th>
@@ -2644,10 +4508,10 @@ let eligPanelHtml = `
                 <th>Grade</th>
                 <th>Unit</th>
                 <th>Division</th>
-                <th>Assessor Score</th>
-                <th style="text-align:center;">Self Score</th>
-                <th style="text-align:center;">Δ Calibration</th>
-                <th style="text-align:center;">Eligibility</th>
+                <th>Assessor Score ${ud_thEye('Assessor Score','Final score awarded by the assessor/manager.','total_score field from Appraisal doctype','')}</th>
+                <th style="text-align:center;">Self Score ${ud_thEye('Self Score','Score submitted by the employee in their self-assessment.','custom_total_self_score field','')}</th>
+                <th style="text-align:center;">Δ Calibration ${ud_thEye('Δ Calibration','Difference between assessor score and self score. Large positive delta = assessor rated much higher than self.','Assessor Score − Self Score\n≥ 0.5 → assessor rated significantly higher\n≤ −0.5 → employee overrated self','e.g. Assessor 4.2 − Self 3.5 = +0.7')}</th>
+                <th style="text-align:center;">Eligibility ${ud_thEye('Eligibility','Promotion eligibility status derived from score, calibration alignment, and appraisal completion.','Strong Candidate: score ≥ 4.0 AND |delta| ≤ 0.5 AND completed\nReady: score ≥ 3.5 AND completed\nWatch List: score ≥ 3.0\nNot Eligible: score < 3.0','')}</th>
                 <th>Appraisal Status</th>
                 <th>Action</th>
             </tr></thead>
@@ -2764,7 +4628,7 @@ let leniencyPanelHtml = `
     <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin-bottom:8px;">
         📋 Unit-wise Leniency / Stringency Detail
     </div>
-    <div style="overflow-x:auto;">
+    <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
         <table class="ud-table">
             <thead><tr>
                 <th>Unit</th>
@@ -2928,7 +4792,7 @@ let delayedPanelHtml = `
             (${delayedEmployees.length} total, showing up to 60)
         </span>
     </div>
-    <div style="overflow-x:auto;">
+    <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
         <table class="ud-table">
             <thead><tr>
                 <th>Employee</th>
@@ -3063,7 +4927,7 @@ let calibVarPanelHtml = `
     <div style="font-size:12px;font-weight:700;color:#0f1f3d;margin-bottom:8px;">
         📋 Unit-wise Calibration Variance Detail
     </div>
-    <div style="overflow-x:auto;">
+    <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
         <table class="ud-table">
             <thead><tr>
                 <th>Unit</th>
@@ -3084,7 +4948,14 @@ let calibVarPanelHtml = `
 let promotionEligibilityHtml = `
 <div class="ud-section">
     <div class="ud-section-header ud-toggle" data-target="ud-body-promo">
-        <h4>🎖 Promotion Eligibility Report — ${unitLabel}</h4>
+            <h4 style="white-space: nowrap;">🎖 Promotion Eligibility Report — ${unitLabel}</h4>
+
+        <div class="ud-section-desc">
+     <strong>Promotion Eligibility</strong> identifies employees ready for promotion based on score thresholds and assessor alignment.
+    <strong>Strong Candidate</strong>: Score ≥ 4.0 + delta ≤ 0.5 + completed.
+    <strong>Ready</strong>: ≥ 3.5 + completed. <strong>Watch</strong>: ≥ 3.0.
+    The Leniency tab shows rating bias per unit. The Delayed tab tracks stalled assessments affecting eligibility decisions.
+</div>
         <span class="ud-toggle-icon">▼</span>
     </div>
     <div class="ud-section-body ud-collapsible-body" id="ud-body-promo">
@@ -3100,6 +4971,15 @@ let promotionEligibilityHtml = `
         <div class="ud-promo-panel"        id="udpp-leniency">${leniencyPanelHtml}</div>
         <div class="ud-promo-panel"        id="udpp-delayed">${delayedPanelHtml}</div>
         <div class="ud-promo-panel"        id="udpp-calibvar">${calibVarPanelHtml}</div>
+        <div class="ai-insight-card" style="margin-top:20px;">
+            <div class="ai-header">
+                <h4 style="white-space: nowrap;">✨ Promotion Eligibility Insights</h4>
+                <button class="btn btn-sm btn-primary" id="btn-ai-promotion-eligibility">Generate Insight</button>
+            </div>
+            <div id="ai-content-promotion-eligibility" class="ai-body ai-insight-content">
+                <p>Click Generate Insight for promotion eligibility analysis<p>
+            </div>
+        </div>
     </div>
 </div>`;
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3163,64 +5043,78 @@ arScored.forEach(d => {
     arGradeMap[g].scores.push(parseFloat(d.total_score));
 });
 
-// Unit table rows
 let arUnitRows = Object.keys(arUnitMap).sort().map(u => {
-    let au = arUnitMap[u];
-    let n  = au.scores.length;
-    let avg = au.scores.reduce((a,b)=>a+b,0)/n;
-    let selfAvg = au.selfScores.length
-        ? au.selfScores.reduce((a,b)=>a+b,0)/au.selfScores.length : null;
-    let wAvg = au.workerScores.length
-        ? au.workerScores.reduce((a,b)=>a+b,0)/au.workerScores.length : null;
-    let sAvg = au.staffScores.length
-        ? au.staffScores.reduce((a,b)=>a+b,0)/au.staffScores.length : null;
-    let top  = au.scores.filter(s=>s>=4.0).length;
-    let low  = au.scores.filter(s=>s<2.5).length;
-    let diff = avg - arPopAvg;
-    let diffStyle = diff > 0.2 ? 'color:#28a745;font-weight:700'
+    let au      = arUnitMap[u];
+    let n       = au.scores.length;                          // scored employees
+    let total   = data.filter(d => (d.custom_unit||'Unknown') === u).length; // total employees
+    let totalScore    = au.scores.reduce((a,b) => a+b, 0);
+    let totalSelfScore = au.selfScores.reduce((a,b) => a+b, 0);
+    let avg     = n ? parseFloat((totalScore / n).toFixed(2)) : 0;
+    let selfAvg = au.selfScores.length ? parseFloat((totalSelfScore / au.selfScores.length).toFixed(2)) : null;
+    let wAvg    = au.workerScores.length ? parseFloat((au.workerScores.reduce((a,b)=>a+b,0)/au.workerScores.length).toFixed(2)) : null;
+    let sAvg    = au.staffScores.length  ? parseFloat((au.staffScores.reduce((a,b)=>a+b,0)/au.staffScores.length).toFixed(2))  : null;
+    let diff    = parseFloat((avg - arPopAvg).toFixed(2));
+    let diffStyle = diff > 0.2  ? 'color:#28a745;font-weight:700'
                   : diff < -0.2 ? 'color:#C8102E;font-weight:700'
-                  : 'color:#868e96;font-weight:700';
-    let barHex = avg >= 4 ? '#f4a100' : avg >= 3 ? '#28a745' : avg >= 2 ? '#ffc107' : '#C8102E';
+                  : 'color:#e6a800;font-weight:700';
+    let barHex  = avg >= 4 ? '#28a745' : avg >= 3 ? '#ffc107' : '#C8102E';
+
     return `<tr>
         <td style="font-weight:700;">${u}</td>
-        <td style="text-align:center;">${n}</td>
+        <td style="text-align:center;font-weight:600;">${total}</td>
+        <td style="text-align:center;font-weight:600;color:#0f1f3d;">${n}</td>
+        <td style="text-align:center;font-weight:700;color:#0f1f3d;">${totalScore.toFixed(2)}</td>
+        <td style="text-align:center;font-weight:700;color:#7b1fa2;">
+            ${au.selfScores.length ? totalSelfScore.toFixed(2) : '<span style="color:#adb5bd;">—</span>'}
+        </td>
         <td>${_spkBar(avg, barHex)}</td>
         <td style="text-align:center;">
             ${selfAvg != null
-                ? `<span style="font-weight:700;color:#C8102E;">${selfAvg.toFixed(2)}</span>`
+                ? `<span style="font-weight:700;color:#7b1fa2;">${selfAvg.toFixed(2)}</span>`
                 : '<span style="color:#adb5bd;">—</span>'}
         </td>
         <td style="text-align:center;font-weight:700;color:#0f1f3d;">${arPopAvg.toFixed(2)}</td>
         <td style="text-align:center;">
-            <span style="${diffStyle}">${diff>=0?'+':''}${diff.toFixed(2)}</span>
+            <span style="${diffStyle}">${diff >= 0 ? '+' : ''}${diff.toFixed(2)}</span>
         </td>
         <td style="text-align:center;">
-            ${wAvg!=null ? `<span style="font-weight:700;color:#7b1fa2;">${wAvg.toFixed(2)}</span>` : '<span style="color:#adb5bd;">—</span>'}
+            ${wAvg != null
+                ? `<span style="font-weight:700;color:#7b1fa2;">${wAvg.toFixed(2)}</span>`
+                : '<span style="color:#adb5bd;">—</span>'}
         </td>
         <td style="text-align:center;">
-            ${sAvg!=null ? `<span style="font-weight:700;color:#1565c0;">${sAvg.toFixed(2)}</span>` : '<span style="color:#adb5bd;">—</span>'}
+            ${sAvg != null
+                ? `<span style="font-weight:700;color:#7b1fa2;">${sAvg.toFixed(2)}</span>`
+                : '<span style="color:#adb5bd;">—</span>'}
         </td>
-        <td style="text-align:center;font-weight:700;color:#f4a100;">${top}</td>
-        <td style="text-align:center;font-weight:700;color:#C8102E;">${low}</td>
     </tr>`;
-}).join('') || `<tr><td colspan="10" style="text-align:center;padding:20px;color:#adb5bd;">No scored appraisals</td></tr>`;
-
+}).join('') || `<tr><td colspan="11" style="text-align:center;padding:20px;color:#adb5bd;">No scored appraisals</td></tr>`;
 // Grade table rows
 let arGradeRows = Object.keys(arGradeMap).sort().map(g => {
-    let ag = arGradeMap[g];
-    let n  = ag.scores.length;
-    let avg = ag.scores.reduce((a,b)=>a+b,0)/n;
+    let ag            = arGradeMap[g];
+    let n             = ag.scores.length;                        // scored
+    let totalEmp      = data.filter(d => (d.custom_grade||'Unknown') === g).length;
+    let totalScore    = ag.scores.reduce((a,b) => a+b, 0);
+    let selfScores    = data
+        .filter(d => (d.custom_grade||'Unknown') === g && parseFloat(d.custom_total_self_score) > 0)
+        .map(d => parseFloat(d.custom_total_self_score));
+    let totalSelfScore = selfScores.reduce((a,b) => a+b, 0);
+    let avg           = n ? parseFloat((totalScore / n).toFixed(2)) : 0;
     let isWorkerGrade = ['A1','A2','A3','A4'].includes(g);
-    let barHex = avg >= 4 ? '#f4a100' : avg >= 3 ? '#28a745' : avg >= 2 ? '#ffc107' : '#C8102E';
+    let barHex        = avg >= 4 ? '#28a745' : avg >= 3 ? '#ffc107' : '#C8102E';
+
     return `<tr>
         <td><span class="ud-badge ud-badge-blue">${g}</span></td>
         <td style="font-size:11px;color:#868e96;">${isWorkerGrade ? '🔧 Worker' : '💼 Staff'}</td>
-        <td style="text-align:center;">${n}</td>
+        <td style="text-align:center;font-weight:600;">${totalEmp}</td>
+        <td style="text-align:center;font-weight:600;color:#0f1f3d;">${n}</td>
+        <td style="text-align:center;font-weight:700;color:#0f1f3d;">${totalScore.toFixed(2)}</td>
+        <td style="text-align:center;font-weight:700;color:#7b1fa2;">
+            ${selfScores.length ? totalSelfScore.toFixed(2) : '<span style="color:#adb5bd;">—</span>'}
+        </td>
         <td>${_spkBar(avg, barHex)}</td>
-        <td style="text-align:center;font-weight:700;color:#f4a100;">${ag.scores.filter(s=>s>=4).length}</td>
-        <td style="text-align:center;font-weight:700;color:#C8102E;">${ag.scores.filter(s=>s<2.5).length}</td>
     </tr>`;
-}).join('') || `<tr><td colspan="6" style="text-align:center;padding:20px;color:#adb5bd;">No data</td></tr>`;
+}).join('') || `<tr><td colspan="7" style="text-align:center;padding:20px;color:#adb5bd;">No data</td></tr>`;
 
 // Top/bottom units
 let arUnitsSorted = Object.keys(arUnitMap).sort((a,b)=>{
@@ -3238,7 +5132,12 @@ let arBottomAvg  = arBottomUnit !== '—'
 let avgRatingHtml = `
 <div class="ud-section">
     <div class="ud-section-header ud-toggle" data-target="ud-body-avgrating">
-        <h4>📊 Average Rating by Unit — ${unitLabel}</h4>
+        <h4 style="white-space: nowrap;">📊 Average Rating by Unit — ${unitLabel}</h4>
+        <div class="ud-section-desc">
+            <strong>Average Rating by Unit</strong> benchmarks each unit's average assessor score against the overall population average (${arPopAvg.toFixed(2)}/5).
+            <strong>Green</strong> = above average · <strong>Red</strong> = below average · <strong>Yellow</strong> = within ±0.2.
+            Use the Grade tab to compare scores across employee grades and the Chart tab for visual comparisons.
+        </div>
         <span class="ud-toggle-icon">▼</span>
     </div>
     <div class="ud-section-body ud-collapsible-body" id="ud-body-avgrating">
@@ -3248,11 +5147,11 @@ let avgRatingHtml = `
                 <div class="nkv">${arScored.length}</div>
                 <div class="nkl">Total Scored</div>
             </div>
-            <div class="ud-ns-kpi nkc-teal">
+            <div class="ud-ns-kpi nkc-purple">
                 <div class="nkv">${arPopAvg.toFixed(2)}</div>
                 <div class="nkl">Overall Avg Score</div>
             </div>
-            <div class="ud-ns-kpi nkc-gold">
+            <div class="ud-ns-kpi nkc-green">
                 <div class="nkv">${arTopUnit}</div>
                 <div class="nkl">Highest Unit (${arTopAvg})</div>
             </div>
@@ -3279,21 +5178,104 @@ let avgRatingHtml = `
                     <strong>Δ vs Pop.</strong> shows how far the unit avg deviates from the overall average
                     (${arPopAvg.toFixed(2)}/5). Green = above average · Red = below average.
                     Worker = Grades A1–A4 · Staff = all other grades.
+                    <strong>Avg Score</strong> = Total Score ÷ Scored Employees.
+                    <strong>Avg Self Score</strong> = Total Self Score ÷ Employees with Self Score.
                 </div>
             </div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Unit</th>
-                        <th style="text-align:center;">Scored</th>
-                        <th>Avg Assessor Score</th>
-                        <th style="text-align:center;">Avg Self Score</th>
-                        <th style="text-align:center;">Pop. Avg</th>
-                        <th style="text-align:center;">Δ vs Pop.</th>
-                        <th style="text-align:center;color:#7b1fa2;">Worker Avg</th>
-                        <th style="text-align:center;color:#1565c0;">Staff Avg</th>
-                        <th style="text-align:center;color:#f4a100;">Top (≥4)</th>
-                        <th style="text-align:center;color:#C8102E;">Low (&lt;2.5)</th>
+                        <th style="text-align:center;">
+                            Total Employees
+                            ${ud_thEye(
+                                'Total Employees',
+                                'Total number of appraisal records for this unit in the selected period, regardless of completion status.',
+                                'Total Employees = COUNT(all appraisals WHERE unit = this unit)',
+                                'e.g. Unit A has 50 appraisals created → Total Employees = 50'
+                            )}
+                        </th>
+                        <th style="text-align:center;">
+                            Scored Employees
+                            ${ud_thEye(
+                                'Scored Employees',
+                                'Employees who have received a final assessor score greater than zero. Only these employees contribute to average score calculations.',
+                                'Scored Employees = COUNT(appraisals WHERE total_score > 0)',
+                                'e.g. 40 of 50 employees have been scored → Scored = 40'
+                            )}
+                        </th>
+                        <th style="text-align:center;">
+                            Total Score
+                            ${ud_thEye(
+                                'Total Score',
+                                'Sum of all final assessor scores across scored employees in this unit. Dividing this by Scored Employees gives the Average Assessor Score.',
+                                'Total Score = SUM(total_score) for all scored employees in unit\n\nAvg Assessor Score = Total Score ÷ Scored Employees',
+                                'e.g. 40 scored employees with scores summing to 152 → Total Score = 152 → Avg = 152 ÷ 40 = 3.80'
+                            )}
+                        </th>
+                        <th style="text-align:center;">
+                            Total Self Score
+                            ${ud_thEye(
+                                'Total Self Score',
+                                'Sum of all self-assessment scores submitted by employees in this unit. Only employees who filled in their self score are counted.',
+                                'Total Self Score = SUM(custom_total_self_score) WHERE self_score > 0\n\nAvg Self Score = Total Self Score ÷ Employees with Self Score',
+                                'e.g. 35 employees submitted self scores summing to 126 → Total Self Score = 126 → Avg = 126 ÷ 35 = 3.60'
+                            )}
+                        </th>
+                        <th>
+                            Avg Assessor Score
+                            ${ud_thEye(
+                                'Avg Assessor Score',
+                                'Average final score awarded by the assessor/manager across all scored employees in this unit. This is the primary performance indicator.',
+                                'Avg Assessor Score = Total Score ÷ Scored Employees\n\nColor coding:\n  Green  = above population average\n  Red    = below population average\n  Yellow = within ±0.2 of population average',
+                                'e.g. Total Score 152 ÷ 40 scored employees = 3.80 / 5'
+                            )}
+                        </th>
+                        <th style="text-align:center;">
+                            Avg Self Score
+                            ${ud_thEye(
+                                'Avg Self Score',
+                                'Average self-assessment score submitted by employees in this unit. Compare against Avg Assessor Score to detect over/under-confidence.',
+                                'Avg Self Score = Total Self Score ÷ Employees with Self Score\n\nIf Avg Self > Avg Assessor → employees over-rated themselves\nIf Avg Self < Avg Assessor → assessor rated higher than self',
+                                'e.g. Total Self Score 126 ÷ 35 employees = 3.60 / 5'
+                            )}
+                        </th>
+                        <th style="text-align:center;">
+                            Pop. Avg
+                            ${ud_thEye(
+                                'Population Average',
+                                'Overall average assessor score across ALL units and ALL grades in the current filter selection. Used as the benchmark to identify lenient or stringent units.',
+                                'Population Avg = SUM(all total_scores across all units) ÷ COUNT(all scored employees)',
+                                'e.g. 800 total score ÷ 200 scored employees = 4.00 population avg'
+                            )}
+                        </th>
+                        <th style="text-align:center;">
+                            Δ vs Pop.
+                            ${ud_thEye(
+                                'Δ vs Population Average',
+                                'How far this unit\'s average assessor score deviates from the overall population average. Positive = this unit scores higher than average (potentially lenient). Negative = scores lower (potentially stringent).',
+                                'Δ = Avg Assessor Score − Population Avg\n\n> +0.2 → Green  (above average)\n< −0.2 → Red    (below average)\nWithin ±0.2 → Yellow (on par)',
+                                'e.g. Unit Avg 4.20 − Pop Avg 3.80 = +0.40 → Green'
+                            )}
+                        </th>
+                        <th style="text-align:center;">
+                            Worker Avg
+                            ${ud_thEye(
+                                'Worker Average Score',
+                                'Average assessor score for Worker-grade employees only (Grades A1, A2, A3, A4) within this unit.',
+                                'Worker Avg = SUM(total_score WHERE grade IN [A1,A2,A3,A4]) ÷ COUNT(scored workers in unit)',
+                                'e.g. 10 workers with total score 36 → Worker Avg = 36 ÷ 10 = 3.60'
+                            )}
+                        </th>
+                        <th style="text-align:center;">
+                            Staff Avg
+                            ${ud_thEye(
+                                'Staff Average Score',
+                                'Average assessor score for Staff-grade employees (all grades except A1–A4) within this unit.',
+                                'Staff Avg = SUM(total_score WHERE grade NOT IN [A1,A2,A3,A4]) ÷ COUNT(scored staff in unit)',
+                                'e.g. 30 staff with total score 116 → Staff Avg = 116 ÷ 30 = 3.87'
+                            )}
+                        </th>
                     </tr></thead>
                     <tbody>${arUnitRows}</tbody>
                 </table>
@@ -3301,15 +5283,56 @@ let avgRatingHtml = `
         </div>
 
         <div class="ud-ns-panel" id="udar-grade">
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Grade</th>
                         <th>Category</th>
-                        <th style="text-align:center;">Count</th>
-                        <th>Avg Score</th>
-                        <th style="text-align:center;color:#f4a100;">Top (≥4)</th>
-                        <th style="text-align:center;color:#C8102E;">Low (&lt;2.5)</th>
+                        <th style="text-align:center;">
+                            Total Employees
+                            ${ud_thEye(
+                                'Total Employees',
+                                'Total appraisal records for this grade regardless of completion status.',
+                                'COUNT(appraisals WHERE grade = this grade)',
+                                'e.g. Grade B3 has 15 appraisals → Total = 15'
+                            )}
+                        </th>
+                        <th style="text-align:center;">
+                            Scored Employees
+                            ${ud_thEye(
+                                'Scored Employees',
+                                'Employees in this grade who have received a final assessor score greater than zero.',
+                                'COUNT(appraisals WHERE grade = this grade AND total_score > 0)',
+                                'e.g. 12 of 15 employees in grade B3 have been scored'
+                            )}
+                        </th>
+                        <th style="text-align:center;">
+                            Total Score
+                            ${ud_thEye(
+                                'Total Score',
+                                'Sum of all assessor scores for this grade. Used to calculate the average.',
+                                'SUM(total_score WHERE grade = this grade AND total_score > 0)',
+                                'e.g. 12 scored employees with scores summing to 45.6 → Total Score = 45.6'
+                            )}
+                        </th>
+                        <th style="text-align:center;">
+                            Total Self Score
+                            ${ud_thEye(
+                                'Total Self Score',
+                                'Sum of self-assessment scores for employees in this grade who submitted a self-score.',
+                                'SUM(custom_total_self_score WHERE grade = this grade AND self_score > 0)',
+                                'e.g. 10 employees submitted self scores summing to 38.0 → Total Self Score = 38.0'
+                            )}
+                        </th>
+                        <th>
+                            Avg Score
+                            ${ud_thEye(
+                                'Average Assessor Score',
+                                'Mean final assessor score for all scored employees in this grade.',
+                                'Avg Score = Total Score ÷ Scored Employees',
+                                'e.g. 45.6 ÷ 12 = 3.80 / 5'
+                            )}
+                        </th>
                     </tr></thead>
                     <tbody>${arGradeRows}</tbody>
                 </table>
@@ -3337,7 +5360,7 @@ let avgRatingHtml = `
             </div>
             <div style="margin-top:16px;">
                 <div style="font-size:12px;font-weight:600;color:#0f1f3d;margin-bottom:6px;">
-                    Top vs Low Performer Count by Unit
+                    Total Score vs Total Self Score by Unit
                 </div>
                 <div style="position:relative;height:220px;">
                     <canvas id="ud-ar-toplw-bar"></canvas>
@@ -3354,10 +5377,10 @@ let avgRatingHtml = `
 
 // Only pending/incomplete appraisals
 let agingList = data
-    .filter(d => !['Approved','Accepted'].includes(d.workflow_state))
+    .filter(d => !['Approved', 'Accepted', 'Cancelled'].includes(d.workflow_state))
     .map(d => {
-        let days = _daysSince(d.modified);
-        let startDays = _daysSince(d.start_date);
+        let days = _daysSince(d.custom_rollout_date);           // ← was: now_date() (always 0)
+        let startDays = _daysSince(d.custom_rollout_date);
         return { d, days: days || 0, startDays: startDays || 0 };
     })
     .sort((a, b) => b.days - a.days);
@@ -3478,7 +5501,13 @@ let agCycleRows = Object.keys(agCycleMap)
 let agingHtml = `
 <div class="ud-section">
     <div class="ud-section-header ud-toggle" data-target="ud-body-aging">
-        <h4>⏱ Appraisal Aging Report — ${unitLabel}</h4>
+            <h4 style="white-space: nowrap;">⏱ Appraisal Aging Report — ${unitLabel}</h4>
+
+        <div class="ud-section-desc">
+    <strong>Appraisal Aging Report</strong> tracks how long pending appraisals have been stalled since the rollout date.
+    <strong>Critical &gt; 60 days · Warning 30–60 days · Watch 15–30 days · Active &lt; 15 days</strong>.
+    Escalate Critical and Warning cases immediately to prevent cycle delays.
+</div>
         <span class="ud-toggle-icon">▼</span>
     </div>
     <div class="ud-section-body ud-collapsible-body" id="ud-body-aging">
@@ -3492,7 +5521,7 @@ let agingHtml = `
                 <div class="nkv">${agWarn.length}</div>
                 <div class="nkl">Warning (30–60 days)</div>
             </div>
-            <div class="ud-ns-kpi nkc-navy">
+            <div class="ud-ns-kpi nkc-yellow">
                 <div class="nkv">${agWatch.length}</div>
                 <div class="nkl">Watch (15–30 days)</div>
             </div>
@@ -3500,7 +5529,7 @@ let agingHtml = `
                 <div class="nkv">${agFresh.length}</div>
                 <div class="nkl">Active (&lt;15 days)</div>
             </div>
-            <div class="ud-ns-kpi nkc-teal">
+            <div class="ud-ns-kpi nkc-purple">
                 <div class="nkv">${agingList.length > 0
                     ? Math.round(agingList.reduce((s,x)=>s+x.days,0)/agingList.length)+'d'
                     : '0d'}</div>
@@ -3535,42 +5564,43 @@ let agingHtml = `
             <div class="ud-ns-tab" data-ag="cycle">📅 By Cycle</div>
         </div>
 
-        <div class="ud-ns-panel active" id="udag-emp">
-            <div style="overflow-x:auto;">
-                <table class="ud-table">
-                    <thead><tr>
-                        <th>Employee</th>
-                        <th>Grade</th>
-                        <th>Unit</th>
-                        <th>Division</th>
-                        <th style="text-align:center;">Pending Days</th>
-                        <th style="text-align:center;">Severity</th>
-                        <th>State</th>
-                        <th>Cycle</th>
-                        <th>Current Score</th>
-                        <th>Action</th>
-                    </tr></thead>
-                    <tbody>${agEmpRows}</tbody>
-                </table>
-                ${agingList.length > 80
-                    ? `<div style="text-align:center;padding:8px;font-size:11px;color:#868e96;">
-                           Showing 80 of ${agingList.length} pending appraisals
-                       </div>` : ''}
-            </div>
-        </div>
+<div class="ud-ns-panel active" id="udag-emp">
+    <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
+        <table class="ud-table" style="width:100%;">
+            <thead><tr>
+                <th>Employee</th>
+                <th>Grade</th>
+                <th>Unit</th>
+                <th>Division</th>
+                <th style="text-align:center;">Pending Days ${ud_thEye('Pending Days','Number of days since the appraisal rollout date. Measures how long the appraisal has been stalled.','TODAY − custom_rollout_date (for incomplete appraisals only)\n> 60d → Critical\n30–60d → Warning\n15–30d → Watch\n< 15d → Active','e.g. Rollout 01-Jan, today 15-Mar = 74 days → Critical')}</th>
+                <th style="text-align:center;">Severity ${ud_thEye('Severity','Risk classification based on number of days stalled since rollout date.','> 60 days → Critical (escalate immediately)\n30–60 days → Warning (follow up)\n15–30 days → Watch (monitor)\n< 15 days → Active (on track)','')}</th>
+                <th>State</th>
+                <th>Cycle</th>
+                <th>Current Score</th>
+                <th>Action</th>
+            </tr></thead>
+            <tbody id="ud-ag-emp-tbody"></tbody>
+        </table>
+    </div>
+    <div id="ud-ag-emp-pagination" style="display:none;flex;align-items:center;justify-content:space-between;padding:10px 4px;margin-top:4px;border-top:1px solid #e9ecef;">
+        <button id="ud-ag-prev" style="padding:5px 14px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;cursor:pointer;color:#495057;">◀ Prev</button>
+        <span id="ud-ag-page-info" style="font-size:12px;color:#868e96;"></span>
+        <button id="ud-ag-next" style="padding:5px 14px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;cursor:pointer;color:#495057;">Next ▶</button>
+    </div>
+</div>
 
         <div class="ud-ns-panel" id="udag-unit">
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Unit</th>
-                        <th style="text-align:center;color:#C8102E;">Critical &gt;60d</th>
-                        <th style="text-align:center;color:#e6a800;">Warning 30–60d</th>
-                        <th style="text-align:center;color:#0f1f3d;">Watch 15–30d</th>
-                        <th style="text-align:center;color:#28a745;">Active &lt;15d</th>
-                        <th style="text-align:center;">Total</th>
-                        <th style="text-align:center;">Max Age</th>
-                        <th style="text-align:center;">Risk</th>
+                        <th style="text-align:center;color:#ffffff;">Critical &gt;60d</th>
+                        <th style="text-align:center;color:#ffffff;">Warning 30–60d</th>
+                        <th style="text-align:center;color:#ffffff;">Watch 15–30d</th>
+                        <th style="text-align:center;color:#ffffff;">Active &lt;15d</th>
+                        <th style="text-align:center;color:#ffffff;">Total</th>
+                        <th style="text-align:center;color:#ffffff;">Max Age</th>
+                        <th style="text-align:center;color:#ffffff;">Risk</th>
                     </tr></thead>
                     <tbody>${agUnitRows}</tbody>
                 </table>
@@ -3578,22 +5608,30 @@ let agingHtml = `
         </div>
 
         <div class="ud-ns-panel" id="udag-cycle">
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Appraisal Cycle</th>
-                        <th style="text-align:center;">Pending</th>
-                        <th style="text-align:center;color:#C8102E;">Critical</th>
-                        <th style="text-align:center;color:#e6a800;">Warning</th>
-                        <th style="text-align:center;">Max Age</th>
-                        <th style="text-align:center;">Avg Age</th>
-                        <th style="text-align:center;">Risk</th>
+                        <th style="text-align:center;color:#ffffff;">Pending</th>
+                        <th style="text-align:center;color:#ffffff;">Critical</th>
+                        <th style="text-align:center;color:#ffffff;">Warning</th>
+                        <th style="text-align:center;color:#ffffff;">Max Age</th>
+                        <th style="text-align:center;color:#ffffff;">Avg Age</th>
+                        <th style="text-align:center;color:#ffffff;">Risk</th>
                     </tr></thead>
                     <tbody>${agCycleRows}</tbody>
                 </table>
             </div>
         </div>
-
+        <div class="ai-insight-card" style="margin-top:20px;">
+            <div class="ai-header">
+                <h4 style="white-space: nowrap;">✨ Appraisal Ageing Insights</h4>
+                <button class="btn btn-sm btn-primary" id="btn-ai-appraisal-ageing">Generate Insight</button>
+            </div>
+            <div id="ai-content-appraisal-ageing" class="ai-body ai-insight-content">
+                <p>Click Generate Insight for appraisal ageing analysis<p>
+            </div>
+        </div>
     </div>
 </div>`;
 
@@ -3701,6 +5739,36 @@ let aeOverviewRows2 = Object.keys(aeUnitMap2).sort().map(u => {
     </tr>`;
 }).join('') || `<tr><td colspan="8"
     style="text-align:center;padding:20px;color:#adb5bd;">No scored data</td></tr>`;
+let assessorEffectivenessData = Object.keys(aeUnitMap2).sort().map(u => {
+    let au = aeUnitMap2[u];
+    let n  = au.total;
+
+    let avgA = au.aScores.reduce((a,b)=>a+b,0) / n;
+    let sd   = _stdDev(au.aScores);
+
+    let lt   = lenTag(avgA, aePop2);
+    let vt   = varTag(sd);
+
+    let ap = au.withSelf
+        ? Math.round((au.aligned / au.withSelf) * 100)
+        : null;
+
+    return {
+        unit: u,
+        total_assessments: n,
+        avg_assessor_score: Number(avgA.toFixed(2)),
+        organization_avg_score: Number(aePop2.toFixed(2)),
+        deviation_from_org_avg: Number(lt.d.toFixed(2)),
+        leniency_label: lt.lbl,
+        score_variance: Number(sd.toFixed(2)),
+        variance_label: vt.lbl,
+        alignment_percent: ap,
+        aligned_count: au.aligned || 0,
+        self_assessed_count: au.withSelf || 0
+    };
+});
+
+window.assessorEffectivenessData = assessorEffectivenessData;
 
 // ── Panel 2: Leniency / Stringency ────────────────────────────────────────
 let aeLenRows2 = Object.keys(aeUnitMap2).sort().map(u => {
@@ -3829,7 +5897,13 @@ let aeCalibRows2 = Object.keys(aeUnitMap2).sort().map(u => {
 let assessorEffHtml = `
 <div class="ud-section">
     <div class="ud-section-header ud-toggle" data-target="ud-body-aeff2">
-        <h4>🔍 Assessor Effectiveness Dashboard — ${unitLabel}</h4>
+            <h4 style="white-space: nowrap;">🔍 Assessor Effectiveness Dashboard — ${unitLabel}</h4>
+
+        <div class="ud-section-desc">
+    <strong>Assessor Effectiveness</strong> detects rating bias per unit by comparing unit averages against the population average (${aePop2.toFixed(2)}/5).
+    <strong>Lenient</strong> units rate &gt;+0.4 above average (inflated). <strong>Stringent</strong> units rate &gt;0.4 below (deflated).
+    High Std Dev within a unit indicates inconsistent scoring behavior by the assessor.
+</div>
         <span class="ud-toggle-icon">▼</span>
     </div>
     <div class="ud-section-body ud-collapsible-body" id="ud-body-aeff2">
@@ -3894,17 +5968,17 @@ let assessorEffHtml = `
                     </div>
                 </div>
             </div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Unit</th>
-                        <th style="text-align:center;">Count</th>
-                        <th>Avg Assessor Score</th>
-                        <th style="text-align:center;">Pop. Avg</th>
-                        <th style="text-align:center;">Δ</th>
-                        <th style="text-align:center;">Trend</th>
-                        <th style="text-align:center;">Std Dev</th>
-                        <th style="text-align:center;">Alignment</th>
+                        <th style="text-align:center;">Count ${ud_thEye('Count','Total employees with a scored appraisal in this unit.','','')}</th>
+                        <th>Avg Assessor Score ${ud_thEye('Avg Assessor Score','Mean assessor score for employees in this unit.','Sum of total score) / No of Appraised Employees','')}</th>
+                        <th style="text-align:center;">Pop. Avg ${ud_thEye('Population Avg','Overall average across all scored employees in the selection.','SUM(all scores) / COUNT(all scored)','')}</th>
+                        <th style="text-align:center;">Δ ${ud_thEye('Δ Deviation','Unit avg minus population avg. Positive = lenient, Negative = stringent.','Unit Avg − Pop Avg\n> +0.4 → Lenient\n< −0.4 → Stringent\nWithin → Balanced','')}</th>
+                        <th style="text-align:center;">Trend ${ud_thEye('Trend','Leniency classification based on deviation from population average.','> +0.4 → Lenient (inflated ratings)\n< −0.4 → Stringent (deflated ratings)\nWithin ±0.4 → Balanced','')}</th>
+                        <th style="text-align:center;">Std Dev ${ud_thEye('Std Dev (Score Spread)','Standard deviation of assessor scores within this unit. High Std Dev = inconsistent scoring.','√(Σ(score − mean)² / n)\n> 1.2 → High Variance\n0.6–1.2 → Moderate\n< 0.6 → Low (consistent)','e.g. Std Dev 1.5 → scores range widely from 1.0 to 5.0')}</th>
+                        <th style="text-align:center;">Alignment ${ud_thEye('Alignment','Percentage of employees where assessor score is within ±0.5 of their self score. High alignment = calibrated assessor.','COUNT(|assessor − self| ≤ 0.5) / COUNT(employees with self score) × 100%','e.g. 60 of 80 within ±0.5 = 75% aligned')}</th>
                     </tr></thead>
                     <tbody>${aeOverviewRows2}</tbody>
                 </table>
@@ -3940,7 +6014,7 @@ let assessorEffHtml = `
                     </div>
                 </div>
             </div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Unit</th>
@@ -4015,7 +6089,7 @@ let assessorEffHtml = `
                     (${aeDelayed2.length} total · showing 60)
                 </span>
             </div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Employee</th><th>Grade</th><th>Unit</th>
@@ -4057,7 +6131,7 @@ let assessorEffHtml = `
                     </div>
                 </div>
             </div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Unit</th>
@@ -4074,17 +6148,30 @@ let assessorEffHtml = `
                 </table>
             </div>
         </div>
-
+        <div class="ai-insight-card" style="margin-top:20px;">
+            <div class="ai-header">
+                <h4 style="white-space: nowrap;">✨ Assessor Effectiveness Insights</h4>
+                <button class="btn btn-sm btn-primary" id="btn-ai-assessor-effectiveness">Generate Insight</button>
+            </div>
+            <div id="ai-content-assessor-effectiveness" class="ai-body ai-insight-content">
+                <p>Click Generate Insight for assessor effectivenss analysis<p>
+            </div>
+        </div>
     </div>
 </div>`;
 
  let successionReadinessHtml = `
 <div class="ud-section ud-succ-wrap" id="ud-succ-section">
     <div class="ud-section-header ud-toggle" data-target="ud-body-succ">
-        <h4>🔄 Succession Readiness — ${unitLabel}</h4>
+            <h4 style="white-space: nowrap;">🔄 Succession Readiness — ${unitLabel}</h4>
+ 
+       <div class="ud-section-desc">
+            🔄 <strong>Succession Readiness</strong> maps your talent pipeline into four tiers: HiPo, Strong, Solid, and At Risk.
+            The <strong>HiPo Pipeline</strong> tab shows employees ready for advancement. <strong>Critical Role Readiness</strong> shows succession depth per appraisal template.
+            The <strong>Gap Analysis</strong> tab flags roles with no ready successor and single-point-of-failure risks.
+        </div>
         <span class="ud-toggle-icon">▼</span>
     </div>
-    <div class="ud-section-body ud-collapsible-body" id="ud-body-succ">
  
         <!-- ── Summary KPI row ── -->
         <div class="ud-readiness-row" id="ud-succ-kpi-row"></div>
@@ -4116,7 +6203,7 @@ let assessorEffHtml = `
                 Roles are inferred from appraisal templates and grade bands.
                 Readiness is derived from score tier and appraisal completion.
             </div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-role-tbl" id="ud-role-table">
                     <thead><tr>
                         <th>Critical Category</th>
@@ -4160,27 +6247,172 @@ let assessorEffHtml = `
 //  STEP 2: ADD ALL THREE SECTIONS TO #ud-main
 //  Replace the existing $page.find('#ud-main').html(...) line with this:
 // ─────────────────────────────────────────────────────────────────────────────
+$('head').append(`<style id="ud-section-desc-styles">
+.ud-section-desc {
+    background: #f0f4ff;
+    border-left: 3px solid #3b82f6;
+    border-radius: 0 6px 6px 0;
+    padding: 8px 14px;
+    font-size: 11px;
+    color: #1e40af;
+    margin-bottom: 14px;
+    line-height: 1.6;
+}
+.ud-section-desc strong { color: #1e3a8a; }
+</style>`);
 
 $page.find('#ud-main').html(
     kpiHtml +
     completionHtml +
     trendHtml +
+    // (frappe.user.has_role("Projects Manager") ? "" : compHtml) +
     compHtml +
+    nineBoxHtml+
     bellHtml +
     performerHtml +
-    histHtml +
+    // (frappe.user.has_role("Projects Manager") ? "" : histHtml) +
+    histHtml+
     avgRatingHtml +
     agingHtml +
     assessorEffHtml +
+    // (frappe.user.has_role("Projects Manager") ? "" : calibrationHtml) +
     calibrationHtml +
     complianceHtml +
     perfCompHtml +
+    // (frappe.user.has_role("Projects Manager") ? "" : perfCompHtml) +
     promotionEligibilityHtml +
     successionReadinessHtml +
     ldHtml
 );
+if ($page.find('#ud-calib-unit-accordion').length) {
+    $page.find('#ud-calib-unit-accordion').html(calibUnitAccordionHtml);
+}
+// ── Apply sticky headers to all overflow tables globally ─────────────────
+$page.find('#ud-main').find('[style*="overflow-x:auto"]').each(function() {
+    let $wrap = $(this);
+    // Only wrap if it contains a ud-table with more than 10 rows
+    let rowCount = $wrap.find('.ud-table tbody tr').length;
+    if (rowCount > 10 && !$wrap.hasClass('ud-table-scroll-wrap')) {
+        $wrap.addClass('ud-table-scroll-wrap');
+    }
+});
+// ── Aging report employee table pagination ────────────────────────────────
+(function() {
+    const AG_PAGE_SIZE = 10;
+    let agCurrentPage = 0;
 
+    function buildAgEmpRow(item) {
+        let d = item.d, days = item.days;
+        let s = parseFloat(d.total_score);
+        return `<tr>
+            <td>
+                <div style="font-weight:700;font-size:12px;">${d.employee_name||d.employee}</div>
+                <div style="font-size:10px;color:#868e96;">${d.employee}</div>
+            </td>
+            <td><span class="ud-badge ud-badge-blue">${d.custom_grade||'—'}</span></td>
+            <td style="font-size:11px;">${d.custom_unit||'—'}</td>
+            <td style="font-size:11px;">${d.custom_division||'—'}</td>
+            <td style="text-align:center;font-weight:700;color:#C8102E;">${days}d</td>
+            <td style="text-align:center;">${agingChip(days)}</td>
+            <td>${_statBadge(d)}</td>
+            <td style="font-size:11px;">${d.appraisal_cycle||'—'}</td>
+            <td>${s > 0 ? _spkBar(s,'#0f1f3d') : '<span style="color:#adb5bd;font-size:11px;">Not scored</span>'}</td>
+            <td>
+                <button class="ud-perf-action ud-act-view"
+                    onclick="frappe.set_route('Form','Appraisal','${d.name}')">View</button>
+            </td>
+        </tr>`;
+    }
 
+    const agTbody   = document.getElementById('ud-ag-emp-tbody');
+    const agPagDiv  = document.getElementById('ud-ag-emp-pagination');
+    const agPrev    = document.getElementById('ud-ag-prev');
+    const agNext    = document.getElementById('ud-ag-next');
+    const agInfo    = document.getElementById('ud-ag-page-info');
+
+    if (!agTbody) return;
+
+    function renderAgPage(page) {
+        const total      = agingList.length;
+        const totalPages = Math.ceil(total / AG_PAGE_SIZE) || 1;
+        const start      = page * AG_PAGE_SIZE;
+        const end        = Math.min(start + AG_PAGE_SIZE, total);
+
+        agTbody.innerHTML = agingList.length
+            ? agingList.slice(start, end).map(item => buildAgEmpRow(item)).join('')
+            : `<tr><td colspan="10" style="text-align:center;padding:20px;color:#adb5bd;">All appraisals are completed</td></tr>`;
+
+        if (agInfo) agInfo.textContent = total > AG_PAGE_SIZE
+            ? `Page ${page + 1} of ${totalPages}  (${start + 1}–${end} of ${total})`
+            : `${total} record${total !== 1 ? 's' : ''}`;
+
+        if (agPagDiv) agPagDiv.style.display = total > AG_PAGE_SIZE ? 'flex' : 'none';
+        if (agPrev)  { agPrev.disabled = page === 0; agPrev.onclick = () => renderAgPage(agCurrentPage - 1); }
+        if (agNext)  { agNext.disabled = page >= totalPages - 1; agNext.onclick = () => renderAgPage(agCurrentPage + 1); }
+        agCurrentPage = page;
+    }
+
+    renderAgPage(0);
+})();
+
+// ── Policy deviations table pagination ───────────────────────────────────
+(function() {
+    const PD_PAGE_SIZE = 10;
+    let pdCurrentPage = 0;
+
+    function buildPdRow({ d, issues }) {
+        let chips = issues.map(i =>
+            `<span class="ud-policy-chip ${i.cls}">${i.type}</span>`
+        ).join(' ');
+        return `<tr>
+            <td>
+                <div style="font-weight:700;font-size:12px;">${d.employee_name||d.employee}</div>
+                <div style="font-size:10px;color:#868e96;">${d.employee}</div>
+            </td>
+            <td style="font-size:11px;">${d.custom_unit||'—'}</td>
+            <td style="font-size:11px;">${d.custom_division||'—'}</td>
+            <td><span class="ud-badge ud-badge-blue">${d.custom_grade||'—'}</span></td>
+            <td>${chips}</td>
+            <td>
+                <button class="ud-perf-action ud-act-view"
+                    onclick="frappe.set_route('Form','Appraisal','${d.name}')">View</button>
+            </td>
+        </tr>`;
+    }
+
+    const pdTbody  = document.getElementById('ud-policy-dev-tbody');
+    const pdPagDiv = document.getElementById('ud-policy-dev-pagination');
+    const pdPrev   = document.getElementById('ud-pd-prev');
+    const pdNext   = document.getElementById('ud-pd-next');
+    const pdInfo   = document.getElementById('ud-pd-page-info');
+
+    if (!pdTbody) return;
+
+    // Use full policyDeviations array (not sliced to 50)
+    const allDeviations = policyDeviations; // already built above
+    window.policyDeviationData = policyDeviations;
+    function renderPdPage(page) {
+        const total      = allDeviations.length;
+        const totalPages = Math.ceil(total / PD_PAGE_SIZE) || 1;
+        const start      = page * PD_PAGE_SIZE;
+        const end        = Math.min(start + PD_PAGE_SIZE, total);
+
+        pdTbody.innerHTML = total
+            ? allDeviations.slice(start, end).map(item => buildPdRow(item)).join('')
+            : `<tr><td colspan="6" style="text-align:center;padding:20px;color:#adb5bd;">No policy deviations detected</td></tr>`;
+
+        if (pdInfo) pdInfo.textContent = total > PD_PAGE_SIZE
+            ? `Page ${page + 1} of ${totalPages}  (${start + 1}–${end} of ${total})`
+            : `${total} violation${total !== 1 ? 's' : ''}`;
+
+        if (pdPagDiv) pdPagDiv.style.display = total > PD_PAGE_SIZE ? 'flex' : 'none';
+        if (pdPrev)  { pdPrev.disabled = page === 0; pdPrev.onclick = () => renderPdPage(pdCurrentPage - 1); }
+        if (pdNext)  { pdNext.disabled = page >= totalPages - 1; pdNext.onclick = () => renderPdPage(pdCurrentPage + 1); }
+        pdCurrentPage = page;
+    }
+
+    renderPdPage(0);
+})();
 // ─────────────────────────────────────────────────────────────────────────────
 //  STEP 3: ADD CHART RENDERS (paste after existing chart renders)
 //  These go inside render_dashboard(), after the bell curve charts.
@@ -4245,8 +6477,10 @@ if ($page.find('#ud-compliance-bar').length) {
                 borderWidth: 0
             }]
         },
+        plugins: [dataLabelPlugin],
         options: {
             responsive: true,
+            layout: { padding: { top: 20 } },
             maintainAspectRatio: false,
             indexAxis: 'y',
             scales: {
@@ -4283,8 +6517,10 @@ if ($page.find('#ud-ar-unit-bar').length) {
                   borderWidth:2, pointRadius:0, backgroundColor:'transparent' }
             ]
         },
+        plugins: [dataLabelPlugin],
         options: {
             responsive:true, maintainAspectRatio:false,
+            layout: { padding: { top: 20 } },
             scales:{ y:{ min: Math.max(0,parseFloat((arPopAvg-1.5).toFixed(1))),
                          max: Math.min(5,parseFloat((arPopAvg+1.5).toFixed(1))) } },
             plugins:{ legend:{ position:'bottom', labels:{ font:{size:10} } } }
@@ -4306,8 +6542,10 @@ if ($page.find('#ud-ar-grade-bar').length) {
             labels: arGk,
             datasets: [{ label:'Avg Score', data: arGAvgs, backgroundColor: arGColors, borderRadius:5, borderWidth:0 }]
         },
+        plugins: [dataLabelPlugin],
         options: {
             responsive:true, maintainAspectRatio:false,
+            layout: { padding: { top: 20 } },
             scales:{ y:{ beginAtZero:false, min:0, max:5 } },
             plugins:{ legend:{ display:false },
                 tooltip:{ callbacks:{ label: c=>`${c.raw}/5` } } }
@@ -4322,18 +6560,46 @@ if ($page.find('#ud-ar-toplw-bar').length) {
         data: {
             labels: arUk,
             datasets: [
-                { label:'Top ≥4.0', data: arUk.map(u=>arUnitMap[u].scores.filter(s=>s>=4).length), backgroundColor:'#f4a100', borderRadius:4, borderWidth:0 },
-                { label:'Low <2.5', data: arUk.map(u=>arUnitMap[u].scores.filter(s=>s<2.5).length), backgroundColor:'#C8102E', borderRadius:4, borderWidth:0 },
+                {
+                    label: 'Total Assessor Score',
+                    data: arUk.map(u => parseFloat(
+                        arUnitMap[u].scores.reduce((a,b)=>a+b,0).toFixed(2)
+                    )),
+                    backgroundColor: '#0f1f3d',
+                    borderRadius: 4,
+                    borderWidth: 0
+                },
+                {
+                    label: 'Total Self Score',
+                    data: arUk.map(u => parseFloat(
+                        arUnitMap[u].selfScores.reduce((a,b)=>a+b,0).toFixed(2)
+                    )),
+                    backgroundColor: '#7b1fa2',
+                    borderRadius: 4,
+                    borderWidth: 0
+                }
             ]
         },
+        plugins: [dataLabelPlugin],
         options: {
-            responsive:true, maintainAspectRatio:false,
-            scales:{ x:{ grid:{display:false} }, y:{ beginAtZero:true } },
-            plugins:{ legend:{ position:'bottom', labels:{ font:{size:10} } } }
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 20 } },
+            scales: {
+                x: { grid: { display: false } },
+                y: { beginAtZero: true }
+            },
+            plugins: {
+                legend: { position: 'bottom', labels: { font: { size: 10 } } },
+                tooltip: {
+                    callbacks: {
+                        label: c => `${c.dataset.label}: ${c.raw}`
+                    }
+                }
+            }
         }
     });
 }
-
 // ── Aging charts ──────────────────────────────────────────────────────────
 let agUk = Object.keys(agUnitMap).sort((a,b)=>agUnitMap[b].total-agUnitMap[a].total);
 
@@ -4346,11 +6612,12 @@ if ($page.find('#ud-aging-unit-bar').length) {
             datasets: [
                 { label:'Critical>60d', data:agUk.map(u=>agUnitMap[u].crit), backgroundColor:'#C8102E', borderRadius:4, borderWidth:0 },
                 { label:'Warning30–60d', data:agUk.map(u=>agUnitMap[u].warn), backgroundColor:'#ffc107', borderRadius:4, borderWidth:0 },
-                { label:'Watch15–30d', data:agUk.map(u=>agUnitMap[u].watch), backgroundColor:'#0f1f3d', borderRadius:4, borderWidth:0 },
+                { label:'Watch15–30d', data:agUk.map(u=>agUnitMap[u].watch), backgroundColor:'#FFEE58 ', borderRadius:4, borderWidth:0 },
             ]
         },
+        plugins: [dataLabelPlugin],
         options: {
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } }, 
             scales:{ x:{stacked:true,grid:{display:false}}, y:{stacked:true,beginAtZero:true} },
             plugins:{ legend:{ position:'bottom', labels:{ font:{size:10} } } }
         }
@@ -4362,10 +6629,10 @@ if ($page.find('#ud-aging-donut').length) {
     chartInstances['ud-aging-donut'] = new Chart($page.find('#ud-aging-donut')[0], {
         type: 'doughnut',
         data: {
-            labels: ['Critical>60d','Warning30–60d','Watch15–30d','Active<15d'],
+            labels: ['Critical>60d','Warning30–60d','Watch15–30d'],
             datasets: [{
-                data: [agCrit.length, agWarn.length, agWatch.length, agFresh.length],
-                backgroundColor: ['#C8102E','#ffc107','#0f1f3d','#28a745'],
+                data: [agCrit.length, agWarn.length, agWatch.length],
+                backgroundColor: ['#C8102E','#ffc107','#FFEE58 '],
                 borderColor:'#fff', borderWidth:3
             }]
         },
@@ -4397,8 +6664,9 @@ if ($page.find('#ud-ae2-overview-bar').length) {
                   type:'line', borderColor:'#0f1f3d', borderDash:[5,3], borderWidth:2, pointRadius:0, backgroundColor:'transparent' }
             ]
         },
+        plugins: [dataLabelPlugin],
         options:{
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } },
             scales:{ y:{ min:Math.max(0,parseFloat((aePop2-1.5).toFixed(1))),
                          max:Math.min(5,parseFloat((aePop2+1.5).toFixed(1))) } },
             plugins:{ legend:{ position:'bottom', labels:{ font:{size:10} } } }
@@ -4416,7 +6684,8 @@ if ($page.find('#ud-ae2-len-donut').length) {
             datasets:[{ data:[aeLenient2,aeStringent2,bal2],
                 backgroundColor:['#f4a100','#C8102E','#28a745'], borderColor:'#fff', borderWidth:3 }]
         },
-        options:{ responsive:true, maintainAspectRatio:false, cutout:'55%',
+        plugins: [dataLabelPlugin],
+        options:{ responsive:true, maintainAspectRatio:false, cutout:'55%',layout: { padding: { top: 20 } },
             plugins:{ legend:{ position:'bottom', labels:{ font:{size:10} } } } }
     });
 }
@@ -4433,8 +6702,9 @@ if ($page.find('#ud-ae2-len-bar').length) {
                   type:'line', borderColor:'#0f1f3d', borderDash:[4,3], borderWidth:2, pointRadius:0, backgroundColor:'transparent' }
             ]
         },
+        plugins: [dataLabelPlugin],
         options:{
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } },
             scales:{ y:{ min:Math.max(0,parseFloat((aePop2-1.5).toFixed(1))),
                          max:Math.min(5,parseFloat((aePop2+1.5).toFixed(1))) } },
             plugins:{ legend:{ position:'bottom', labels:{ font:{size:10} } } }
@@ -4449,8 +6719,9 @@ if ($page.find('#ud-ae2-spread-bar').length) {
     chartInstances['ud-ae2-spread-bar'] = new Chart($page.find('#ud-ae2-spread-bar')[0], {
         type:'bar',
         data:{ labels:ae2Uk, datasets:[{ label:'Std Dev', data:sdevs2, backgroundColor:sdColors2, borderRadius:5, borderWidth:0 }] },
+        plugins: [dataLabelPlugin],
         options:{
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } },
             scales:{ y:{ beginAtZero:true } },
             plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: c=>`${c.raw} — ${c.raw>1.2?'High':c.raw>0.6?'Moderate':'Low'} variance` } } }
         }
@@ -4470,8 +6741,9 @@ if ($page.find('#ud-ae2-delay-unit').length) {
                 { label:'Watch15–30d', data:ae2DelUk.map(u=>aeDelUnitMap2[u].watch), backgroundColor:'#0f1f3d', borderRadius:4, borderWidth:0 },
             ]
         },
+        plugins: [dataLabelPlugin],
         options:{
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } },
             scales:{ x:{stacked:true,grid:{display:false}}, y:{stacked:true,beginAtZero:true} },
             plugins:{ legend:{ position:'bottom', labels:{ font:{size:10} } } }
         }
@@ -4487,7 +6759,8 @@ if ($page.find('#ud-ae2-delay-donut').length) {
             labels:['Critical>60d','Warning30–60d','Watch15–30d'],
             datasets:[{ data:[dc2,dw2,dwc2], backgroundColor:['#C8102E','#ffc107','#0f1f3d'], borderColor:'#fff', borderWidth:3 }]
         },
-        options:{ responsive:true, maintainAspectRatio:false, cutout:'55%',
+        plugins: [dataLabelPlugin],
+        options:{ responsive:true, maintainAspectRatio:false, cutout:'55%',layout: { padding: { top: 20 } },
             plugins:{ legend:{ position:'bottom', labels:{ font:{size:10} } } } }
     });
 }
@@ -4499,8 +6772,9 @@ if ($page.find('#ud-ae2-calibvar-bar').length) {
     chartInstances['ud-ae2-calibvar-bar'] = new Chart($page.find('#ud-ae2-calibvar-bar')[0], {
         type:'bar',
         data:{ labels:ae2Uk, datasets:[{ label:'Std Dev', data:cvDevs2, backgroundColor:cvColors2, borderRadius:5, borderWidth:0 }] },
+        plugins: [dataLabelPlugin],
         options:{
-            responsive:true, maintainAspectRatio:false, scales:{ y:{beginAtZero:true} },
+            responsive:true, maintainAspectRatio:false, layout: { padding: { top: 20 } },scales:{ y:{beginAtZero:true} },
             plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>`Std Dev: ${c.raw}` } } }
         }
     });
@@ -4516,8 +6790,9 @@ if ($page.find('#ud-ae2-align-bar').length) {
     chartInstances['ud-ae2-align-bar'] = new Chart($page.find('#ud-ae2-align-bar')[0], {
         type:'bar',
         data:{ labels:ae2Uk, datasets:[{ label:'Alignment %', data:alRates2, backgroundColor:alColors2, borderRadius:5, borderWidth:0 }] },
+        plugins: [dataLabelPlugin],
         options:{
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } },
             scales:{ y:{beginAtZero:true, max:100, ticks:{callback:v=>v+'%'}} },
             plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>`${c.raw}% within ±0.5 of self` } } }
         }
@@ -4592,7 +6867,7 @@ let totalPending2    = data.filter(d => !['Approved','Accepted'].includes(d.work
 
 if ($page.find('#ud-compliance-donut').length) {
     let totalOverdueAll = data.filter(d => d.custom_appraisal_status === 'Overdue').length;
-    let totalNoSelf     = data.filter(d => !d.custom_total_self_score || parseFloat(d.custom_total_self_score) === 0).length;
+    let totalNoSelf     = data.filter(d => (((!d.custom_total_self_score && (d.workflow_state != 'Draft'))  || (parseFloat(d.custom_total_self_score) === 0 && (d.workflow_state != 'Draft'))) && !['A1','A2','A3','A4'].includes(d.custom_grade || ''))).length;
     let totalLongDraft  = Object.values(complianceUnitMap).reduce((s, u) => s + u.longDraft, 0);
     let totalPending2   = data.filter(d => !['Approved','Accepted'].includes(d.workflow_state)).length;
  
@@ -4603,10 +6878,10 @@ if ($page.find('#ud-compliance-donut').length) {
     chartInstances['ud-compliance-donut'] = new Chart(el, {
         type: 'doughnut',
         data: {
-            labels: ['Overdue', 'No Self Score', 'Stalled Draft (>30d)', 'Pending'],
+            labels: ['Overdue', 'No Self Score', 'Pending'],
             datasets: [{
                 data: hasDevData
-                    ? [totalOverdueAll, totalNoSelf, totalLongDraft, totalPending2]
+                    ? [totalOverdueAll, totalNoSelf, totalPending2]
                     : [1],   // dummy slice so chart renders when all zero
                 backgroundColor: hasDevData
                     ? ['#C8102E', '#6c757d', '#ffc107', '#ff8c00']
@@ -4615,9 +6890,11 @@ if ($page.find('#ud-compliance-donut').length) {
                 borderWidth: 3
             }]
         },
+        plugins: [dataLabelPlugin],
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            layout: { padding: { top: 20 } }, 
             cutout: '58%',
             plugins: {
                 legend: {
@@ -4694,62 +6971,121 @@ let scatterPoints = calibData.map(d => ({
 // });
 
 if ($page.find('#ud-calib-scatter').length && calibData.length > 0) {
-    let scatterPoints = calibData.map(d => ({
-        x: parseFloat(d.custom_total_self_score),
-        y: parseFloat(d.total_score),
-        label: d.employee_name || d.employee
-    }));
- 
+
+    // Build score distribution buckets (1.0 to 5.0 in 0.5 steps)
+    const SCORE_BUCKETS  = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0];
+    const SCORE_LABELS   = ['1.0', '1.5', '2.0', '2.5', '3.0', '3.5', '4.0', '4.5', '5.0'];
+
+    // Count employees per bucket for Self Score
+    let selfCounts = new Array(SCORE_BUCKETS.length).fill(0);
+    // Count employees per bucket for Assessor Score
+    let assrCounts = new Array(SCORE_BUCKETS.length).fill(0);
+
+    calibData.forEach(d => {
+        let selfVal = parseFloat(d.custom_total_self_score);
+        let assrVal = parseFloat(d.total_score);
+
+        // Place into nearest bucket
+        for (let i = 0; i < SCORE_BUCKETS.length; i++) {
+            let bucketMin = SCORE_BUCKETS[i];
+            let bucketMax = i < SCORE_BUCKETS.length - 1 ? SCORE_BUCKETS[i + 1] : 5.01;
+
+            if (selfVal >= bucketMin && selfVal < bucketMax) selfCounts[i]++;
+            if (assrVal >= bucketMin && assrVal < bucketMax) assrCounts[i]++;
+        }
+    });
+
+    // Smooth both arrays for bell curve effect
+    function smoothArr(arr) {
+        return arr.map((v, i, a) => {
+            let prev = a[i - 1] || v;
+            let next = a[i + 1] || v;
+            return parseFloat(((prev + v * 2 + next) / 4).toFixed(2));
+        });
+    }
+
+    let selfSmoothed = selfCounts;
+    let assrSmoothed = assrCounts;
+
     destroyChart('ud-calib-scatter');
-    let el = $page.find('#ud-calib-scatter')[0];
-    chartInstances['ud-calib-scatter'] = new Chart(el, {
-        type: 'scatter',
+    chartInstances['ud-calib-scatter'] = new Chart($page.find('#ud-calib-scatter')[0], {
+        type: 'bar',
         data: {
+            labels: SCORE_LABELS,
             datasets: [
+                
                 {
-                    label: 'Employees',
-                    data: scatterPoints,
-                    backgroundColor: 'rgba(200,16,46,0.55)',
-                    pointRadius: 5,
-                    pointHoverRadius: 7
+                    label: 'Self Score',
+                    data:  selfSmoothed,
+                    type:  'line',
+                    borderColor:     '#C8102E',
+                    backgroundColor: 'rgba(200,16,46,0.06)',
+                    borderWidth:     2.5,
+                    pointRadius:     4,
+                    pointBackgroundColor: '#C8102E',
+                    tension:         0.45,
+                    fill:            true,
+                    order:           1,
+                    
                 },
                 {
-                    label: 'Perfect Match (y=x)',
-                    data: [{ x:0, y:0 }, { x:5, y:5 }],
-                    type: 'line',
-                    borderColor: '#0f1f3d',
-                    borderDash: [5, 3],
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                    backgroundColor: 'transparent'
+                    label: 'Assessor Score',
+                    data:  assrSmoothed,
+                    type:  'line',
+                    borderColor:     '#0f1f3d',
+                    backgroundColor: 'rgba(15,31,61,0.06)',
+                    borderWidth:     2.5,
+                    pointRadius:     4,
+                    pointBackgroundColor: '#0f1f3d',
+                    tension:         0.45,
+                    fill:            true,
+                    order:           2
                 }
             ]
         },
+        plugins: [dataLabelPlugin],
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            layout: { padding: { top: 20 } }, 
             scales: {
-                x: { min:0, max:5.5, title:{ display:true, text:'Self Score (Pre)', font:{ size:11 } } },
-                y: { min:0, max:5.5, title:{ display:true, text:'Assessor Score (Post)', font:{ size:11 } } }
+                x: {
+                    grid: { display: false },
+                    title: {
+                        display: true,
+                        text: 'Score Range (1.0 – 5.0)',
+                        font: { size: 11, weight: 'bold' }
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { stepSize: 1, callback: v => Number.isInteger(v) ? v : null },
+                    title: {
+                        display: true,
+                        text: 'Number of Employees',
+                        font: { size: 11 }
+                    }
+                }
             },
             plugins: {
-                legend: { position:'bottom', labels:{ font:{ size:10 } } },
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        font: { size: 10 },
+                        usePointStyle: true,
+                        padding: 16
+                    }
+                },
                 tooltip: {
                     callbacks: {
-                        label: c => {
-                            if (c.datasetIndex === 0) {
-                                let pt = scatterPoints[c.dataIndex];
-                                return `${pt ? pt.label : 'Employee'} — Self: ${c.parsed.x}  Post: ${c.parsed.y}`;
-                            }
-                            return 'Perfect match line';
-                        }
+                        title: ctx => `Score: ${ctx[0].label}`,
+                        label: ctx => `${ctx.dataset.label}: ${Math.round(ctx.raw)} employee(s)`
                     }
                 }
             }
         }
     });
 }
-
 let calibUnitKeys = Object.keys(calibUnitMap).sort();
 // mkChart('ud-calib-unit-bar', {
 //     type: 'bar',
@@ -4784,30 +7120,151 @@ let calibUnitKeys = Object.keys(calibUnitMap).sort();
 // });
 
 
+
 if ($page.find('#ud-calib-unit-bar').length && Object.keys(calibUnitMap).length > 0) {
     let calibUnitKeys = Object.keys(calibUnitMap).sort();
-    destroyChart('ud-calib-unit-bar');
-    let el = $page.find('#ud-calib-unit-bar')[0];
-    chartInstances['ud-calib-unit-bar'] = new Chart(el, {
-        type: 'bar',
-        data: {
-            labels: calibUnitKeys,
-            datasets: [
-                { label:'▲ Rated Up',   data: calibUnitKeys.map(u => calibUnitMap[u].up),   backgroundColor:'#28a745', borderRadius:4, borderWidth:0 },
-                { label:'= No Change',  data: calibUnitKeys.map(u => calibUnitMap[u].flat),  backgroundColor:'#9e9e9e', borderRadius:4, borderWidth:0 },
-                { label:'▼ Rated Down', data: calibUnitKeys.map(u => calibUnitMap[u].down),  backgroundColor:'#C8102E', borderRadius:4, borderWidth:0 }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                x: { stacked:true, grid:{ display:false }, ticks:{ font:{ size:10 } } },
-                y: { stacked:true, beginAtZero:true, ticks:{ stepSize:1 } }
-            },
-            plugins: { legend:{ position:'bottom', labels:{ font:{ size:10 } } } }
-        }
+
+    // Unit colours palette
+    const UNIT_PALETTE = [
+        '#C8102E','#0f1f3d','#00796b','#7b1fa2','#1565c0',
+        '#e65100','#2e7d32','#ad1457','#f57f17','#37474f'
+    ];
+
+    // Build one dataset per unit, each point = one employee
+    let unitDatasets = calibUnitKeys.map((u, idx) => {
+        let points = calibData
+            .filter(d => (d.custom_unit || 'Unknown') === u)
+            .map(d => ({
+                x: parseFloat(d.custom_total_self_score),
+                y: parseFloat(d.total_score),
+                name: d.employee_name || d.employee
+            }));
+        return {
+            label:           u,
+            data:            points,
+            backgroundColor: UNIT_PALETTE[idx % UNIT_PALETTE.length] + 'cc',
+            borderColor:     UNIT_PALETTE[idx % UNIT_PALETTE.length],
+            pointRadius:     6,
+            pointHoverRadius:9
+        };
     });
+
+    // Perfect-match diagonal y = x
+    unitDatasets.push({
+        label:           'Perfect Match (y = x)',
+        data:            [{ x: 1, y: 1 }, { x: 5, y: 5 }],
+        type:            'line',
+        borderColor:     '#868e96',
+        borderDash:      [5, 4],
+        borderWidth:     1.5,
+        pointRadius:     0,
+        backgroundColor: 'transparent',
+        showLine:        true
+    });
+
+    destroyChart('ud-calib-unit-bar');
+chartInstances['ud-calib-unit-bar'] = new Chart($page.find('#ud-calib-unit-bar')[0], {
+    type: 'scatter',
+    data: { datasets: unitDatasets },
+    options: {
+        responsive:          true,
+        maintainAspectRatio: false,
+        layout: { padding: { top: 20 } },
+        scales: {
+            x: {
+                min: 1, max: 5,
+                ticks: { stepSize: 0.5 },
+                title: { display: true, text: 'Self Score (X)', font: { size: 11, weight: 'bold' } },
+                grid: { color: 'rgba(0,0,0,.06)' }
+            },
+            y: {
+                min: 1, max: 5,
+                ticks: { stepSize: 0.5 },
+                title: { display: true, text: 'Assessor Score (Y)', font: { size: 11, weight: 'bold' } },
+                grid: { color: 'rgba(0,0,0,.06)' }
+            }
+        },
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: { font: { size: 10 }, usePointStyle: true, padding: 14 }
+            },
+            tooltip: {
+                callbacks: {
+                    label: ctx => {
+                        if (ctx.dataset.label === 'Perfect Match (y = x)')
+                            return 'Perfect match line';
+                        let pt = ctx.raw;
+                        return `${ctx.dataset.label} — Self: ${pt.x}  Assessor: ${pt.y}`;
+                    }
+                }
+            }
+        }
+    },
+    plugins: [{
+        id: 'scatterPointLabels',
+        afterDatasetsDraw(chart) {
+            const { ctx } = chart;
+
+            chart.data.datasets.forEach((ds, di) => {
+                if (ds.label === 'Perfect Match (y = x)') return;
+                if (chart.getDatasetMeta(di).hidden) return;
+
+                // Count employees at same coordinate within this dataset
+                const coordCount = {};
+                ds.data.forEach(raw => {
+                    if (!raw) return;
+                    const key = `${parseFloat(raw.x).toFixed(1)}_${parseFloat(raw.y).toFixed(1)}`;
+                    coordCount[key] = (coordCount[key] || 0) + 1;
+                });
+
+                const meta    = chart.getDatasetMeta(di);
+                const rendered = new Set();
+
+                meta.data.forEach((pt, idx) => {
+                    const raw = ds.data[idx];
+                    if (!raw) return;
+
+                    const key = `${parseFloat(raw.x).toFixed(1)}_${parseFloat(raw.y).toFixed(1)}`;
+                    if (rendered.has(key)) return;
+                    rendered.add(key);
+
+                    const count      = coordCount[key];
+                    const { x, y }   = pt.getProps(['x', 'y'], true);
+                    const label      = String(count);
+
+                    ctx.save();
+                    ctx.font = 'bold 10px Inter, sans-serif';
+
+                    const metrics = ctx.measureText(label);
+                    const pad     = 3;
+                    const bw      = Math.max(metrics.width + pad * 2, 16);
+                    const bh      = 14;
+                    const bx      = x - bw / 2;
+                    const by      = y - 24;
+
+                    // Colored pill background
+                    ctx.fillStyle = ds.borderColor || '#333';
+                    ctx.beginPath();
+                    if (ctx.roundRect) {
+                        ctx.roundRect(bx, by, bw, bh, 4);
+                    } else {
+                        ctx.rect(bx, by, bw, bh);
+                    }
+                    ctx.fill();
+
+                    // White count number
+                    ctx.fillStyle    = '#fff';
+                    ctx.textAlign    = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(label, x, by + bh / 2);
+
+                    ctx.restore();
+                });
+            });
+        }
+    }]
+});
 }
 
 // ── Performance vs Compensation charts ───────────────────────────────────────
@@ -4854,9 +7311,11 @@ if ($page.find('#ud-pvc-dist-bar').length && pvcScored.length > 0) {
                 borderWidth: 0
             }]
         },
+        plugins: [dataLabelPlugin],
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            layout: { padding: { top: 20 } },
             scales: {
                 y: { beginAtZero:true, ticks:{ stepSize:1 } },
                 x: { grid:{ display:false } }
@@ -4918,9 +7377,11 @@ if ($page.find('#ud-pvc-unit-bar').length && Object.keys(pvcUnitMap).length > 0)
                 { label:'Low/Hold/PIP',   data: pvcUnitKeys.map(u => pvcUnitMap[u].low + pvcUnitMap[u].hold + pvcUnitMap[u].pip), backgroundColor:'#C8102E', borderRadius:4, borderWidth:0 }
             ]
         },
+        plugins: [dataLabelPlugin],
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            layout: { padding: { top: 20 } },
             scales: {
                 x: { stacked:true, grid:{ display:false }, ticks:{ font:{ size:10 } } },
                 y: { stacked:true, beginAtZero:true, ticks:{ stepSize:1 } }
@@ -4962,18 +7423,31 @@ if ($page.find('#ud-pvc-unit-bar').length && Object.keys(pvcUnitMap).length > 0)
                     });
                 }
             };
-
+            
             function mkChart(id, config, usePlugin) {
                 destroyChart(id);
                 let el = $page.find('#' + id)[0];
                 if (!el) return;
-                // Always disable animation for reliable canvas capture
                 config.options = config.options || {};
                 config.options.animation = config.options.animation !== undefined ? config.options.animation : { duration: 800 };
-                if (usePlugin) config.plugins = [dlPlugin];
+
+                // ── Default data label plugin (shows values on all chart types) ──
+               
+                // Bell curve charts use dlPlugin only — skip dataLabelPlugin for them
+                const isBellChart = id.startsWith('ud-bell-')  || id.startsWith('ud-kra-bar-chart') 
+
+
+                if (isBellChart && usePlugin) {
+                    config.plugins = [dlPlugin];
+                } else if (!isBellChart) {
+                    config.plugins = [dataLabelPlugin];   // ← this runs for ud-hist-unit-comp
+                } else {
+                    config.plugins = [];
+                }
+
                 chartInstances[id] = new Chart(el, config);
             }
-
+            
             // ── Standard charts ────────────────────────────────────────────────
             mkChart('ud-donut-chart', {
                 type: 'doughnut',
@@ -4990,28 +7464,118 @@ if ($page.find('#ud-pvc-unit-bar').length && Object.keys(pvcUnitMap).length > 0)
                     responsive:true, maintainAspectRatio:false, cutout:'62%',
                     plugins: {
                         legend:{ position:'bottom' },
-                        tooltip:{ callbacks:{ label: ctx => `${ctx.label}: ${ctx.raw} (${pct(ctx.raw, total)}%)` } }
+                        tooltip:{ callbacks:{ label: ctx => `${ctx.label}: ${ctx.raw} (${pct(ctx.raw, total)}%)` } },
+                        datalabels: {
+                color: '#000000', // Forces the text font color to black
+                font: {
+                    weight: 'bold' // Keeps it highly readable against the colors
+                }
+            }
+                        
                     }
                 }
             });
 
             let deptKeys = Object.keys(deptMap).sort();
-            mkChart('ud-dept-bar-chart', {
-                type: 'bar',
-                data: {
-                    labels: deptKeys,
-                    datasets: [
-                        { label:'Completed %', data: deptKeys.map(k => pct(deptMap[k].completed, deptMap[k].total)), backgroundColor:'#28a745' },
-                        { label:'Pending %',   data: deptKeys.map(k => pct(deptMap[k].total - deptMap[k].completed, deptMap[k].total)), backgroundColor:'#ffc107' },
-                        { label:'Overdue %', data: deptKeys.map(k => pct(deptMap[k].overdue, deptMap[k].total)), backgroundColor:'#C8102E' },
-                    ]
-                },
-                options: {
-                    responsive:true, maintainAspectRatio:false,
-                    scales:{ y:{ beginAtZero:true, max:100, ticks:{ callback: v => v+'%' } } },
-                    plugins:{ legend:{ position:'bottom' } }
-                }
-            });
+            console.log(
+                deptKeys.map(k => ({
+                    dept: k,
+                    completed: deptMap[k].completed,
+                    total: deptMap[k].total,
+                    overdue: deptMap[k].overdue,
+                    completedPct: pct(deptMap[k].completed, deptMap[k].total)
+                }))
+            );
+
+            // mkChart('ud-dept-bar-chart', {
+            //     type: 'bar',
+            //     data: {
+            //         labels: deptKeys,
+            //         datasets: [
+            //             { label:'Completed %', data: deptKeys.map(k => pct(deptMap[k].completed, deptMap[k].total)), backgroundColor:'#28a745' },
+            //             { label:'Pending %',   data: deptKeys.map(k => pct(deptMap[k].total - deptMap[k].completed, deptMap[k].total)), backgroundColor:'#ffc107' },
+            //             { label:'Overdue %', data: deptKeys.map(k => pct(deptMap[k].overdue, deptMap[k].total)), backgroundColor:'#C8102E' },
+            //         ]
+            //     },
+            //     options: {
+            //         responsive:true, maintainAspectRatio:false,
+            //         scales:{ y:{ beginAtZero:true, max:100, ticks:{ callback: v => v+'%' } } },
+            //         plugins:{ legend:{ position:'bottom' } }
+            //     }
+            // });
+
+                let current_user = frappe.session.user;
+
+                frappe.call({
+                    method: "frappe.client.get_list",
+                    args: {
+                        doctype: "User Permission",
+                        filters: {
+                            user: current_user,
+                            allow: "Unit"
+                        },
+                        fields: ["name"]
+                    },
+                    callback: function(r) {
+
+                        if (r.message && r.message.length > 0) {
+
+                            $('#ud-dept-bar-chart').closest('.ud-chart-wrap').hide();
+
+                        } else {
+
+                            // Show chart
+                            $('#ud-dept-bar-chart').closest('.ud-chart-wrap').show();
+
+                            // Bar Chart
+                            mkChart('ud-dept-bar-chart', {
+                                type: 'bar',
+                                data: {
+                                    labels: deptKeys,
+                                    datasets: [
+                                        {
+                                            label:'Completed %',
+                                            data: deptKeys.map(k => pct(deptMap[k].completed, deptMap[k].total)),
+                                            backgroundColor:'#28a745'
+                                        },
+                                        {
+                                            label:'Pending %',
+                                            data: deptKeys.map(k => pct(deptMap[k].total - deptMap[k].completed, deptMap[k].total)),
+                                            backgroundColor:'#ffc107'
+                                        },
+                                        {
+                                            label:'Overdue %',
+                                            data: deptKeys.map(k => pct(deptMap[k].overdue, deptMap[k].total)),
+                                            backgroundColor:'#C8102E'
+                                        },
+                                    ]
+                                },
+                                options: {
+                                    responsive:true,
+                                    maintainAspectRatio:false,
+                                    scales: {
+                                        y: {
+                                            beginAtZero: true,
+                                            max: 110,
+                                            ticks: {
+                                                callback: function(v) {
+                                                    if (v <= 100) {
+                                                        return v + '%';
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    plugins:{
+                                        legend:{
+                                            position:'bottom'
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    }
+                });
 
             mkChart('ud-trend-line-chart', {
                 type: 'line',
@@ -5024,8 +7588,9 @@ if ($page.find('#ud-pvc-unit-bar').length && Object.keys(pvcUnitMap).length > 0)
                     ]
                 },
                 options: {
-                    responsive:true, maintainAspectRatio:false,
-                    plugins:{ legend:{ position:'bottom' } }
+                    responsive: true, maintainAspectRatio: false,
+                    layout: { padding: { top: 20 } },   // ← add this
+                    plugins: { legend: { position: 'bottom' } }
                 }
             });
 
@@ -5040,9 +7605,10 @@ if ($page.find('#ud-pvc-unit-bar').length && Object.keys(pvcUnitMap).length > 0)
                     }]
                 },
                 options: {
-                    responsive:true, maintainAspectRatio:false,
-                    scales:{ y:{ beginAtZero:false, min:0, max:5 } },
-                    plugins:{ legend:{ position:'bottom' } }
+                    responsive: true, maintainAspectRatio: false,
+                    layout: { padding: { top: 20 } },   // ← add this
+                    scales: { y: { beginAtZero: false, min: 0, max: 5 } },
+                    plugins: { legend: { position: 'bottom' } }
                 }
             });
 
@@ -5098,9 +7664,9 @@ if ($page.find('#ud-pvc-unit-bar').length && Object.keys(pvcUnitMap).length > 0)
             _renderBell = renderBell;
 
             // Render all three bells immediately (all canvases exist in DOM)
-            renderBell('combined', _staffTarget,   _staffCounts);
-            // renderBell('worker',   _workerTarget, _workerCounts);
-            // renderBell('staff',    _staffTarget,  _staffCounts);
+            renderBell('combined', _combTarget,   _combCounts);
+            renderBell('worker',   _workerTarget, _workerCounts);
+            renderBell('staff',    _staffTarget,  _staffCounts);
 
             // ── Bell tab switcher ──────────────────────────────────────────────
             let bellColorMap = { combined:'#0f1f3d', worker:'#C8102E', staff:'#2d7a4f' };
@@ -5161,8 +7727,10 @@ if ($page.find('#ud-pvc-unit-bar').length && Object.keys(pvcUnitMap).length > 0)
                         // ── Competency breakdown: top vs low performers ───────────────────────
 let topNames    = new Set(perfTopList.map(d => d.name).concat(perfStrongList.map(d => d.name)));
 let lowNames    = new Set(perfLowList.map(d => d.name));
+let middleNames    = new Set(perfMiddleList.map(d => d.name));
 
 let kraTopAgg = {}, kraLowAgg = {};
+let kraMiddleAgg = {};
 goalData.forEach(function(row) {
     let n = (row.kra || 'Unknown').trim();
     if (topNames.has(row.parent)) {
@@ -5171,35 +7739,64 @@ goalData.forEach(function(row) {
         kraTopAgg[n].selfSum += parseFloat(row.custom_self_score) || 0;
         kraTopAgg[n].assrSum += parseFloat(row.custom_assessor_score) || 0;
     }
-    if (lowNames.has(row.parent)) {
+    else if (lowNames.has(row.parent)) {
         if (!kraLowAgg[n]) kraLowAgg[n] = { total:0, selfSum:0, assrSum:0 };
         kraLowAgg[n].total++;
         kraLowAgg[n].selfSum += parseFloat(row.custom_self_score) || 0;
         kraLowAgg[n].assrSum += parseFloat(row.custom_assessor_score) || 0;
     }
+    else if (middleNames.has(row.parent)) {
+        if (!kraMiddleAgg[n]) kraMiddleAgg[n] = { total:0, selfSum:0, assrSum:0 };
+        kraMiddleAgg[n].total++;
+        kraMiddleAgg[n].selfSum += parseFloat(row.custom_self_score) || 0;
+        kraMiddleAgg[n].assrSum += parseFloat(row.custom_assessor_score) || 0;
+    }
 });
 
 // Build comparison summary cards (top 5 KRAs by assessor score gap)
-let allKras = [...new Set([...Object.keys(kraTopAgg), ...Object.keys(kraLowAgg)])];
+let allKras = [...new Set([...Object.keys(kraTopAgg), ...Object.keys(kraLowAgg), ...Object.keys(kraMiddleAgg),])];
 let kraGapRows = allKras.map(n => {
     let tAvg = kraTopAgg[n] && kraTopAgg[n].total
         ? (kraTopAgg[n].assrSum / kraTopAgg[n].total) : 0;
+    let mAvg = kraMiddleAgg[n] && kraMiddleAgg[n].total
+        ? (kraMiddleAgg[n].assrSum / kraMiddleAgg[n].total)
+        : 0;
     let lAvg = kraLowAgg[n] && kraLowAgg[n].total
         ? (kraLowAgg[n].assrSum / kraLowAgg[n].total) : 0;
     let gap  = tAvg - lAvg;
-    return { name: n, tAvg, lAvg, gap };
+    return { name: n, tAvg, mAvg, lAvg, gap };
 }).sort((a, b) => b.gap - a.gap);
 
+let competencyGapInsightData = [];
 let compSummaryRows = kraGapRows.map(r => {
+    competencyGapInsightData.push({
+        competency: r.name,
+        top_performer_avg: Number(r.tAvg.toFixed(2)),
+        median_performer_avg: Number((r.mAvg || 0).toFixed(2)),
+        low_performer_avg: Number(r.lAvg.toFixed(2)),
+        gap: Number(r.gap.toFixed(2))
+    });
+
     let tW   = Math.min(100, Math.round((r.tAvg / 5) * 100));
+    let mW   = Math.min(100, Math.round((r.mAvg / 5) * 100));
     let lW   = Math.min(100, Math.round((r.lAvg / 5) * 100));
     let gapCls = r.gap >= 1.5 ? 'ud-badge-red' : r.gap >= 0.5 ? 'ud-badge-orange' : 'ud-badge-green';
     return `<tr>
-        <td style="font-weight:600;font-size:11px;">${r.name}</td>
+        <td style="font-weight:600;font-size:11px;">${(r.name).toUpperCase()}</td>
         <td>
             <div style="display:flex;align-items:center;gap:6px;">
-                <div class="ud-prog" style="flex:1;"><div class="ud-prog-fill" style="width:${tW}%;background:#f4a100;"></div></div>
-                <span style="font-size:10px;font-weight:700;color:#f4a100;min-width:28px;">${r.tAvg.toFixed(2)}</span>
+                <div class="ud-prog" style="flex:1;"><div class="ud-prog-fill" style="width:${tW}%;background:#28a745;"></div></div>
+                <span style="font-size:10px;font-weight:700;color:#28a745;min-width:28px;">${r.tAvg.toFixed(2)}</span>
+            </div>
+        </td>
+        <td>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <div class="ud-prog" style="flex:1;">
+                    <div class="ud-prog-fill" style="width:${mW}%;background:#f4a100;"></div>
+                </div>
+                <span style="font-size:10px;font-weight:700;color:#f4a100;min-width:28px;">
+                    ${r.mAvg ? r.mAvg.toFixed(2) : '0.00'}
+                </span>
             </div>
         </td>
         <td>
@@ -5212,7 +7809,8 @@ let compSummaryRows = kraGapRows.map(r => {
             <span class="ud-badge ${gapCls}">${r.gap >= 0 ? '+' : ''}${r.gap.toFixed(2)}</span>
         </td>
     </tr>`;
-}).join('') || `<tr><td colspan="4" style="text-align:center;padding:16px;color:#adb5bd;">No competency data for this segment</td></tr>`;
+}).join('') || `<tr><td colspan="5" style="text-align:center;padding:16px;color:#adb5bd;">No competency data for this segment</td></tr>`;
+window.competencyGapInsightData = competencyGapInsightData;
 
 $page.find('#ud-comp-perf-table').html(`
     <div style="margin-top:18px;">
@@ -5222,42 +7820,158 @@ $page.find('#ud-comp-perf-table').html(`
                 Assessor score avg · sorted by gap (highest first)
             </span>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;">
-            <div style="background:#fff8e1;border-radius:8px;padding:12px 14px;border-top:3px solid #f4a100;text-align:center;">
-                <div style="font-size:18px;font-weight:700;color:#f4a100;">${perfTopList.length + perfStrongList.length}</div>
-                <div style="font-size:10px;font-weight:600;color:#868e96;text-transform:uppercase;letter-spacing:1px;margin-top:3px;">Top &amp; Strong</div>
+
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
+
+            <!-- TOP PERFORMERS CARD -->
+            <div style="background:#fff8e1;border-radius:8px;padding:12px 14px;border-top:3px solid #28a745;text-align:center;">
+            <div style="font-size:18px;font-weight:700;color:#28a745;">${perfTopList.length}</div>
+            <div style="font-size:10px;font-weight:600;color:#868e96;...">
+                Top Performers
+                <span onclick="ud_showColInfo(
+                    'Top Performers',
+                    'Employees who scored 4.0 or above in their final appraisal AND whose appraisal has been fully approved.',
+                    'Top Performers: total_score >= 4.0\n\nRequires: workflow_state IN [Approved, Accepted]\n\nCount = employees scoring 4.0 and above only',
+                    'e.g. 6 employees scored ≥ 4.0 → shown here as Top Performers')"
+                        style="cursor:pointer;opacity:0.6;margin-left:4px;vertical-align:middle;display:inline-flex;">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                             stroke="#868e96" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="12" y1="8" x2="12" y2="8"/>
+                            <line x1="12" y1="12" x2="12" y2="16"/>
+                        </svg>
+                    </span>
+                </div>
                 <div style="font-size:10px;color:#adb5bd;margin-top:2px;">
                     Avg: ${kraGapRows.length ? (kraGapRows.reduce((s,r)=>s+r.tAvg,0)/kraGapRows.length).toFixed(2) : 'N/A'} / 5
                 </div>
             </div>
+
+            <!-- MIDDLE PERFORMERS CARD -->
+            <div style="background:#fff4e6;border-radius:8px;padding:12px 14px;border-top:3px solid #ffc107;text-align:center;">
+                <div style="font-size:18px;font-weight:700;color:#ffc107;">${perfMiddleList.length}</div>
+                <div style="font-size:10px;font-weight:600;color:#868e96;text-transform:uppercase;letter-spacing:1px;margin-top:3px;">
+                    Middle Performers
+                    <span onclick="ud_showColInfo(
+                        'Middle Performers',
+                        'Employees who scored between 3.0 and 3.99 in their final appraisal with a completed appraisal.',
+                        'BAND:    total_score >= 3.0 AND total_score < 4.0\nSTATUS:  workflow_state IN [Approved, Accepted]',
+                        'e.g. 15 employees scored between 3.0 and 3.99 → shown as Middle Performers')"
+                        style="cursor:pointer;opacity:0.6;margin-left:4px;vertical-align:middle;display:inline-flex;">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                             stroke="#868e96" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="12" y1="8" x2="12" y2="8"/>
+                            <line x1="12" y1="12" x2="12" y2="16"/>
+                        </svg>
+                    </span>
+                </div>
+                <div style="font-size:10px;color:#adb5bd;margin-top:2px;">
+                    Avg: ${kraGapRows.length ? (kraGapRows.reduce((s,r)=>s+r.mAvg,0)/kraGapRows.length).toFixed(2) : 'N/A'} / 5
+                </div>
+            </div>
+
             <div style="background:#fff0f0;border-radius:8px;padding:12px 14px;border-top:3px solid #C8102E;text-align:center;">
                 <div style="font-size:18px;font-weight:700;color:#C8102E;">${perfLowList.length}</div>
-                <div style="font-size:10px;font-weight:600;color:#868e96;text-transform:uppercase;letter-spacing:1px;margin-top:3px;">Low Performers</div>
+                <div style="font-size:10px;font-weight:600;color:#868e96;text-transform:uppercase;letter-spacing:1px;margin-top:3px;">
+                    Low Performers
+                    <span onclick="ud_showColInfo(
+                        'Low Performers',
+                        'Employees who scored between 1.0 and 2.99 in their final appraisal with a completed appraisal.',
+                        'BAND:    total_score >= 1.0 AND total_score < 3.0\nSTATUS:  workflow_state IN [Approved, Accepted]\n\nSub-bands within Low:\n  Critical (PIP): total_score <= 2.0\n  Review:         total_score > 2.0 AND <= 2.5\n  Monitor:        total_score > 2.5 AND < 3.0',
+                        'e.g. 5 employees scored between 1.0 and 2.99 → flagged for development review or PIP')"
+                        style="cursor:pointer;opacity:0.6;margin-left:4px;vertical-align:middle;display:inline-flex;">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                             stroke="#868e96" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="12" y1="8" x2="12" y2="8"/>
+                            <line x1="12" y1="12" x2="12" y2="16"/>
+                        </svg>
+                    </span>
+                </div>
                 <div style="font-size:10px;color:#adb5bd;margin-top:2px;">
                     Avg: ${kraGapRows.length ? (kraGapRows.reduce((s,r)=>s+r.lAvg,0)/kraGapRows.length).toFixed(2) : 'N/A'} / 5
                 </div>
             </div>
+
+            <!-- BIGGEST GAP KRA CARD -->
             <div style="background:#f3e5f5;border-radius:8px;padding:12px 14px;border-top:3px solid #7b1fa2;text-align:center;">
-                <div style="font-size:18px;font-weight:700;color:#7b1fa2;">${kraGapRows.length > 0 ? kraGapRows[0].name.substring(0,18) + (kraGapRows[0].name.length > 18 ? '…' : '') : '—'}</div>
-                <div style="font-size:10px;font-weight:600;color:#868e96;text-transform:uppercase;letter-spacing:1px;margin-top:3px;">Biggest Gap KRA</div>
+                <div style="font-size:18px;font-weight:700;color:#7b1fa2;"></div>
+                <div style="font-size:10px;font-weight:600;color:#868e96;text-transform:uppercase;letter-spacing:1px;margin-top:3px;padding-top:10px;">
+                    Biggest Gap KRA
+                    <span onclick="ud_showColInfo(
+                        'Biggest Gap KRA',
+                        'The single competency where the difference in assessor scores between Top/Strong performers and Low performers is the largest. This KRA is the most critical skill differentiator — it separates high achievers from low achievers the most and should be prioritised in L&D planning.',
+                        'STEP 1: For each KRA compute —\n  tAvg = avg assessor score across Top+Strong employees\n  lAvg = avg assessor score across Low employees\n  gap  = tAvg − lAvg\n\nSTEP 2: SORT all KRAs BY gap DESC\nSTEP 3: TAKE the first row → Biggest Gap KRA',
+                        'e.g. LEADERSHIP: Top avg 4.20 − Low avg 1.60 = gap +2.60 → biggest differentiator across all KRAs')"
+                        style="cursor:pointer;opacity:0.6;margin-left:4px;vertical-align:middle;display:inline-flex;">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                             stroke="#868e96" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="12" y1="8" x2="12" y2="8"/>
+                            <line x1="12" y1="12" x2="12" y2="16"/>
+                        </svg>
+                    </span>
+                </div>
                 <div style="font-size:10px;color:#adb5bd;margin-top:2px;">
                     Gap: ${kraGapRows.length ? (kraGapRows[0].gap >= 0 ? '+' : '') + kraGapRows[0].gap.toFixed(2) : '—'}
                 </div>
             </div>
+
         </div>
-        <div style="overflow-x:auto;">
+
+        <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
             <table class="ud-table">
                 <thead><tr>
-                    <th>Competency / KRA</th>
-                    <th>🌟 Top &amp; Strong (Avg / 5)</th>
-                    <th>🔴 Low Performers (Avg / 5)</th>
-                    <th style="text-align:center;">Gap</th>
+                    <th>Competency / KRA
+                        ${ud_thEye('Competency / KRA',
+                            'The name of the KRA or Galfar Value competency being evaluated. Each row is one unique competency assessed across all appraisals in the selected unit and period.',
+                            'SOURCE: Appraisal Goal rows → kra field\nGrouped by unique KRA name across all appraisals in selection',
+                            'e.g. SAFETY, INTEGRITY, QUALITY, LEADERSHIP, CONTINUOUS IMPROVEMENT')}
+                    </th>
+                    <th>Top Performers (Avg / 5)
+                        ${ud_thEye('Top Performers (Avg / 5)',
+                            'Average assessor score for this competency across employees who scored 4.0 or above overall.',
+                            'Score Range: 4–5',
+                            'e.g. 8 top employees have a SAFETY KRA row → avg of their assessor scores = 4.20 / 5')}
+                    </th>
+
+                    <th>Middle Performers (Avg / 5)
+                        ${ud_thEye('Middle Performers (Avg / 5)',
+                            'Average assessor score for employees who scored between 3.0 and 3.99 overall.',
+                            'Score Range: 3–4',
+                            'e.g. 12 middle performers (3-4) have a SAFETY KRA row → avg = 3.10 / 5')}
+                    </th>
+
+                    <th>Low Performers (Avg / 5)
+                        ${ud_thEye('Low Performers (Avg / 5)',
+                            'Average assessor score for employees who scored between 1.0 and 2.99 overall.',
+                            'Score Range: 1–3',
+                            'e.g. 5 low performers (1–3) have a SAFETY KRA row → avg = 1.80 / 5')}
+                    </th>
+                    <th style="text-align:center;">Gap
+                        ${ud_thEye('Gap',
+                            'The competency gap = Top Performer avg - Low Performer avg for this KRA. A large positive gap means this competency strongly separates high and low performers — it is a key skill differentiator. A small or zero gap means all bands score similarly on this KRA.',
+                            'Gap = Top Performer Avg − Low Performer Avg\n\nBadge colour:\n  ≥ 1.5 → red    (critical differentiator — prioritise in L&D)\n  ≥ 0.5 → yellow  (moderate gap — monitor and develop)\n  < 0.5 → green  (minimal gap — competency is evenly spread)',
+                            'e.g. Top avg 4.20 − Low avg 1.80 = +2.40 → red badge → critical gap to close')}
+                    </th>
                 </tr></thead>
                 <tbody>${compSummaryRows}</tbody>
             </table>
         </div>
+
+        <div class="ai-insight-card" style="margin-top:20px;">
+            <div class="ai-header">
+                <h4 style="white-space: nowrap;">✨ Competency Gap Insights</h4>
+                <button class="btn btn-sm btn-primary" id="btn-ai-competency-gap">Generate Insight</button>
+            </div>
+            <div id="ai-content-competency-gap" class="ai-body ai-insight-content">
+                <p>Click Generate Insight for competency gap analysis</p>
+            </div>
+        </div>
     </div>
-`);                     let kraAgg = {};
+`);                       
+                        let kraAgg = {};
                         goalData.forEach(function(row) {
                             let name    = (row.kra         || 'Unknown').trim();
                             let kraUnit = (row.custom_unit || 'Unknown').trim();
@@ -5278,15 +7992,67 @@ $page.find('#ud-comp-perf-table').html(`
                             if (unitCmp !== 0) return unitCmp;
                             return a.toLowerCase().localeCompare(b.toLowerCase(), undefined, { sensitivity:'base' });
                         }
+                        const priorityKRAs = [
+                                "SAFETY",
+                                "INTEGRITY",
+                                "QUALITY",
+                                "SIMPLICITY",
+                                "RESPECT",
+                                "CONTINUOUS IMPROVEMENT"
+                            ];
 
-                        let kraNames   = Object.keys(kraAgg).sort(kraUnitSort);
+                            let kraNames = Object.keys(kraAgg).sort((a, b) => {
+                                const aKey = a.trim().toUpperCase();
+                                const bKey = b.trim().toUpperCase();
+
+                                const aIndex = priorityKRAs.indexOf(aKey);
+                                const bIndex = priorityKRAs.indexOf(bKey);
+
+                                if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+                                if (aIndex !== -1) return -1;
+                                if (bIndex !== -1) return 1;
+
+                                return kraUnitSort(a, b);
+                            });
+                                                    
+                        // let kraNames   = Object.keys(kraAgg).sort(kraUnitSort);
                         let kraAvgSelf = kraNames.map(n => kraAgg[n].count ? parseFloat((kraAgg[n].totalSelf / kraAgg[n].count).toFixed(2)) : 0);
                         let kraAvgAssr = kraNames.map(n => kraAgg[n].count ? parseFloat((kraAgg[n].totalAssr / kraAgg[n].count).toFixed(2)) : 0);
                         let kraCounts  = kraNames.map(n => kraAgg[n].count);
+                        
+                        window.selfAssessorBarData = kraNames.map((name, i) => ({
+                            competency: name,
+                            avg_self_score: kraAvgSelf[i],
+                            avg_assessor_score: kraAvgAssr[i],
+                            employee_count: kraCounts[i]
+                        }));
+
+                        window.competencyRadarData = window.selfAssessorBarData;
 
                         $page.find('#ud-comp-loading').hide();
                         $page.find('#ud-comp-content').show();
 
+                        // mkChart('ud-kra-bar-chart', {
+                        //     type: 'bar',
+                        //     data: {
+                        //         labels: kraNames,
+                        //         datasets: [
+                        //             { label:'Avg Self Score',     data: kraAvgSelf, backgroundColor:'rgba(200,16,46,0.65)', borderColor:'#C8102E', borderWidth:1, borderRadius:5 },
+                        //             { label:'Avg Assessor Score', data: kraAvgAssr, backgroundColor:'rgba(15,31,61,0.70)',  borderColor:'#0f1f3d', borderWidth:1, borderRadius:5 }
+                        //         ]
+                        //     },
+                        //     options: {
+                        //         responsive:true, maintainAspectRatio:false, indexAxis:'y',
+                        //         scales: {
+                        //             x: { beginAtZero:true, max:5, grid:{ color:'rgba(0,0,0,.05)' } },
+                        //             y: { ticks:{ font:{ size:11 } } }
+                        //         },
+                        //         plugins: {
+                        //             legend:{ position:'bottom' },
+                        //             title:{ display:true, text:'Avg Self & Assessor Score per KRA (out of 5)', font:{ size:12 } }
+                        //         }
+                        //     }
+                        // });
                         mkChart('ud-kra-bar-chart', {
                             type: 'bar',
                             data: {
@@ -5309,6 +8075,90 @@ $page.find('#ud-comp-perf-table').html(`
                             }
                         });
 
+                        let kraChartData = {
+                            labels: [...kraNames],
+                            self:   [...kraAvgSelf],
+                            assr:   [...kraAvgAssr]
+                        };
+
+                        $('#ud-kra-bar-chart')
+                            .css('cursor','pointer')
+                            .off('click')
+                            .on('click', function() {
+
+                                // ── Always destroy old chart + remove old canvas before creating dialog ──
+                                let existingChart = Chart.getChart('ud-kra-bar-chart-modal');
+                                if (existingChart) existingChart.destroy();
+                                $('#ud-kra-bar-chart-modal').closest('.modal').remove();  // nuke old dialog DOM too
+
+                                // ── Fresh dialog every click ──────────────────────────────────────────────
+                                let d = new frappe.ui.Dialog({
+                                    title: 'KRA Score Distribution',
+                                    size: 'extra-large'
+                                });
+
+                                $(d.body).html(`
+                                    <div style="padding:16px; box-sizing:border-box;">
+                                        <canvas id="ud-kra-bar-chart-modal"></canvas>
+                                    </div>
+                                `);
+
+                                d.show();
+
+                                setTimeout(() => {
+                                    let canvas = document.getElementById('ud-kra-bar-chart-modal');
+                                    if (!canvas) return;
+
+                                    let modalWidth = $(d.body).width() || 800;
+                                    canvas.width        = modalWidth - 32;
+                                    canvas.height       = 480;
+                                    canvas.style.width  = (modalWidth - 32) + 'px';
+                                    canvas.style.height = '480px';
+
+                                    new Chart(canvas, {
+                                        type: 'bar',
+                                        data: {
+                                            labels: kraChartData.labels.map(l => l.toUpperCase()),
+
+                                            datasets: [
+                                                {
+                                                    label: 'Avg Self Score',
+                                                    data:  kraChartData.self,
+                                                    backgroundColor: 'rgba(200,16,46,0.65)',
+                                                    borderColor: '#C8102E',
+                                                    borderWidth: 1,
+                                                    borderRadius: 5
+                                                },
+                                                {
+                                                    label: 'Avg Assessor Score',
+                                                    data:  kraChartData.assr,
+                                                    backgroundColor: 'rgba(15,31,61,0.70)',
+                                                    borderColor: '#0f1f3d',
+                                                    borderWidth: 1,
+                                                    borderRadius: 5
+                                                }
+                                            ]
+                                        },
+                                        options: {
+                                            responsive: false,
+                                            maintainAspectRatio: false,
+                                            indexAxis: 'y',
+                                            scales: {
+                                                x: { beginAtZero:true, max:5, grid:{ color:'rgba(0,0,0,.05)' } },
+                                                y: { ticks:{ font:{ size:13 } } }
+                                            },
+                                            plugins: {
+                                                legend: { position:'bottom' },
+                                                title: {
+                                                    display: true,
+                                                    text: 'Avg Self & Assessor Score per KRA (out of 5)',
+                                                    font: { size:14 }
+                                                }
+                                            }
+                                        }
+                                    });
+                                }, 300);
+                            });
                         mkChart('ud-kra-radar-chart', {
                             type: 'radar',
                             data: {
@@ -5328,26 +8178,153 @@ $page.find('#ud-comp-perf-table').html(`
                             }
                         });
 
-                        let kraTableRows = kraNames.map((n, i) => {
-                            let selfAvg = kraAvgSelf[i];
-                            let asrAvg  = kraAvgAssr[i];
-                            let cnt     = kraCounts[i];
-                            let cls     = asrAvg >= 4 ? 'green' : asrAvg >= 2.5 ? 'orange' : 'red';
-                            let barW    = Math.min((asrAvg / 5) * 100, 100);
-                            return `<tr>
-                                <td style="font-weight:600;">${n}</td>
-                                <td style="text-align:center;">${cnt}</td>
-                                <td style="text-align:center;color:#C8102E;font-weight:700;">${selfAvg.toFixed(2)}</td>
-                                <td style="text-align:center;color:#0f1f3d;font-weight:700;">${asrAvg.toFixed(2)}</td>
-                                <td>
-                                    <div style="display:flex;align-items:center;gap:8px;">
-                                        <div class="ud-prog" style="flex:1;"><div class="ud-prog-fill" style="width:${barW}%;background:#0f1f3d;"></div></div>
-                                        <span class="ud-badge ud-badge-${cls}">${asrAvg.toFixed(2)} / 5</span>
-                                    </div>
-                                </td>
-                            </tr>`;
-                        }).join('');
+                        let kraRadarData = {
+                            labels: [...kraNames],
+                            self:   [...kraAvgSelf],
+                            assr:   [...kraAvgAssr]
+                        };
 
+                        $('#ud-kra-radar-chart')
+                            .css('cursor', 'pointer')
+                            .off('click')
+                            .on('click', function() {
+
+                                // Destroy + purge old dialog
+                                let existingChart = Chart.getChart('ud-kra-radar-chart-modal');
+                                if (existingChart) existingChart.destroy();
+                                $('#ud-kra-radar-chart-modal').closest('.modal').remove();
+
+                                // Fresh dialog every click
+                                let d = new frappe.ui.Dialog({
+                                    title: 'Galfar Values & Competency Radar',
+                                    size: 'large'
+                                });
+
+                                // Force wider than Frappe's default extra-large cap
+                                $(d.$wrapper).find('.modal-dialog').css({
+                                    'max-width': '50vw',
+                                    'width':     '50vw'
+                                });
+
+                                $(d.body).html(`
+                                    <div style="padding:12px; box-sizing:border-box; overflow-y:auto; max-height:75vh;">
+                                        <canvas id="ud-kra-radar-chart-modal"></canvas>
+                                    </div>
+                                `);
+
+                                d.show();
+
+                                setTimeout(() => {
+                                    let canvas = document.getElementById('ud-kra-radar-chart-modal');
+                                    if (!canvas) return;
+
+                                    let modalWidth = $(d.body).width() || 650;
+                                    let size = modalWidth - 24;
+
+                                    canvas.width        = size;
+                                    canvas.height       = size;       // square = perfect radar shape
+                                    canvas.style.width  = size + 'px';
+                                    canvas.style.height = size + 'px';
+
+                                    new Chart(canvas, {
+                                        type: 'radar',
+                                        data: {
+                                            labels: kraRadarData.labels.map(l => l.toUpperCase()),
+                                            datasets: [
+                                                {
+                                                    label: 'Avg Self Score',
+                                                    data:  kraRadarData.self,
+                                                    borderColor: '#C8102E',
+                                                    backgroundColor: 'rgba(200,16,46,.15)',
+                                                    pointBackgroundColor: '#C8102E',
+                                                    pointRadius: 5
+                                                },
+                                                {
+                                                    label: 'Avg Assessor Score',
+                                                    data:  kraRadarData.assr,
+                                                    borderColor: '#0f1f3d',
+                                                    backgroundColor: 'rgba(15,31,61,.15)',
+                                                    pointBackgroundColor: '#0f1f3d',
+                                                    pointRadius: 5
+                                                }
+                                            ]
+                                        },
+                                        options: {
+                                            responsive: false,
+                                            maintainAspectRatio: false,
+                                            layout: {
+                                                padding: 60    // keeps edge labels from clipping
+                                            },
+                                            scales: {
+                                                r: {
+                                                    beginAtZero: true,
+                                                    max: 5,
+                                                    ticks: {
+                                                        font: { size: 10 },
+                                                        backdropColor: 'transparent'
+                                                    },
+                                                    pointLabels: {
+                                                        font: { size: 10 },
+                                                        color: '#333'
+                                                    }
+                                                }
+                                            },
+                                            plugins: {
+                                                legend: { position: 'bottom' },
+                                                title: {
+                                                    display: true,
+                                                    text: 'Galfar Values & Competency Radar (out of 5)',
+                                                    font: { size: 13 }
+                                                }
+                                            }
+                                        }
+                                    });
+                                }, 300);
+                            });
+                            
+                        let competencyInsightData = [];
+
+                        let kraTableRows = kraNames.map((n, i) => {
+
+                            let selfAvg = parseFloat(kraAvgSelf[i]) || 0;
+                            let asrAvg  = parseFloat(kraAvgAssr[i]) || 0;
+                            let cnt     = parseInt(kraCounts[i]) || 0;
+
+                            competencyInsightData.push({
+                                competency: n,
+                                employees: cnt,
+                                avg_self: Number(selfAvg.toFixed(2)),
+                                avg_assessor: Number(asrAvg.toFixed(2)),
+                                assessor_progress: Number(((asrAvg / 5) * 100).toFixed(0))
+                            });
+
+                            let cls  = asrAvg >= 4 ? 'green' : asrAvg >= 2.5 ? 'orange' : 'red';
+                            let barW = Math.min((asrAvg / 5) * 100, 100);
+
+                            return `
+                                <tr>
+                                    <td style="font-weight:600;">${n.toUpperCase()}</td>
+                                    <td style="text-align:center;">${cnt}</td>
+                                    <td style="text-align:center;color:#C8102E;font-weight:700;">${selfAvg.toFixed(2)}</td>
+                                    <td style="text-align:center;color:#0f1f3d;font-weight:700;">${((asrAvg/5)*100).toFixed(0)}%</td>
+
+                                    <td>
+                                        <div style="display:flex;align-items:center;gap:8px;">
+                                            <div class="ud-prog" style="flex:1;">
+                                                <div class="ud-prog-fill"
+                                                    style="width:${barW}%;background:#0f1f3d;">
+                                                </div>
+                                            </div>
+
+                                            <span class="ud-badge ud-badge-${cls}">
+                                                ${asrAvg.toFixed(2)} / 5
+                                            </span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('');
+                        window.competencyInsightData = competencyInsightData;
                         $page.find('#ud-kra-table').html(`
                             <table class="ud-table">
                                 <thead><tr>
@@ -5359,6 +8336,15 @@ $page.find('#ud-comp-perf-table').html(`
                                 </tr></thead>
                                 <tbody>${kraTableRows}</tbody>
                             </table>
+                            <div class="ai-insight-card" style="margin-top:20px;">
+                                <div class="ai-header">
+                                    <h4 style="white-space: nowrap;">✨ Competency Insights</h4>
+                                    <button class="btn btn-sm btn-primary" id="btn-ai-competency">Generate Insight</button>
+                                </div>
+                                <div id="ai-content-competency" class="ai-body ai-insight-content">
+                                    <p>Click Generate Insight for competency status analysis<p>
+                                </div>
+                            </div>
                         `);
                     }
                 });
@@ -5388,26 +8374,20 @@ $page.find('#ud-comp-perf-table').html(`
 
             $page.find('#ud-card-total').off('click').on('click',     () => openList());
             $page.find('#ud-card-completed').off('click').on('click', () => openList({ workflow_state: ['in', ['Approved','Accepted']] }));
-            $page.find('#ud-card-pending').off('click').on('click',   () => openList({ workflow_state: ['not in', ['Approved','Accepted']] }));
+            $page.find('#ud-card-pending').off('click').on('click',   () => openList({ workflow_state: ['not in', ['Approved','Accepted','Cancelled']] }));
             $page.find('#ud-card-avg').off('click').on('click',       () => openList({ custom_appraisal_status: ['==', 'Overdue'] }));
-            $page.find('#ud-card-top').off('click').on('click',       () => openList({ docstatus: ['in', ['0','1']],total_score: ['>', 3.5] }));
-            $page.find('#ud-card-low').off('click').on('click',       () => openList({ docstatus: ['in', ['0','1']],total_score: ['<', 2.5]}));
+            $page.find('#ud-card-top').off('click').on('click',       () => openList({ workflow_state: ['in', ['Approved','Accepted']],total_score: ['>', 3.5] }));
+            $page.find('#ud-card-low').off('click').on('click',       () => openList({ workflow_state: ['in', ['Approved','Accepted']],total_score: ['<', 2.5]}));
             // ── Performer mini-KPI card clicks ────────────────────────────────────────
-            $page.find('#udp-kpi-top').off('click').on('click',
-                () => openList({ total_score: ['>=', 4.0] }));
-            $page.find('#udp-kpi-strong').off('click').on('click',
-                () => openList({ total_score: ['between', [3.5, 3.99]] }));
-            $page.find('#udp-kpi-low').off('click').on('click',
-                () => openList({ total_score: ['<', 2.5] }));
-            $page.find('#udp-kpi-critical').off('click').on('click',
-                () => openList({ total_score: ['<=', 2.0] }));
+            
             function perfBand(s) {
+                
     let v = parseFloat(s) || 0;
-    if (v >= 4.0) return { label: 'A — Excellent',  cls: 'ud-badge-green',  hex: '#28a745' };
-    if (v >= 3.0) return { label: 'B — Very Good',  cls: 'ud-badge-blue',   hex: '#1565c0' };
-    if (v >= 2.0) return { label: 'C — Good',       cls: 'ud-badge-orange', hex: '#e6a800' };
-    if (v >= 1.0) return { label: 'D — Acceptable', cls: 'ud-badge-red',    hex: '#e53935' };
-    return         { label: 'E — Poor',             cls: 'ud-badge-red',    hex: '#b71c1c' };
+    if (v >= 4.0) return { label: 'A — Excellent',  cls: 'ud-badge-green',  hex: '#4C8C32' };
+    if (v >= 3.0) return { label: 'B — Very Good',  cls: 'ud-badge-blue',   hex: '#9AC654' };
+    if (v >= 2.0) return { label: 'C — Good',       cls: 'ud-badge-orange', hex: '#F1D548' };
+    if (v >= 1.0) return { label: 'D — Acceptable', cls: 'ud-badge-red',    hex: '#D97706' };
+    return         { label: 'E — Poor',             cls: 'ud-badge-red',    hex: '#ED2D1E' };
 }
  
 // ── Helper: horizontal score bar ─────────────────────────────────────────
@@ -5465,8 +8445,9 @@ if ($page.find('#ud-promo-donut').length) {
                 borderColor: '#fff', borderWidth: 3
             }]
         },
+        plugins: [dataLabelPlugin],
         options: {
-            responsive: true, maintainAspectRatio: false, cutout: '58%',
+            responsive: true, maintainAspectRatio: false, cutout: '58%',layout: { padding: { top: 20 } },
             plugins: {
                 legend: { position: 'bottom', labels: { font: { size: 10 } } },
                 tooltip: { callbacks: { label: c => `${c.label}: ${c.raw}` } }
@@ -5497,8 +8478,9 @@ if ($page.find('#ud-promo-unit-bar').length) {
                 { label:'Watch',  data: puk.map(u => promoUnitMap[u].watch),  backgroundColor:'#1565c0', borderRadius:4, borderWidth:0 },
             ]
         },
+        plugins: [dataLabelPlugin],
         options: {
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } },
             scales: { x:{ stacked:true, grid:{display:false} }, y:{ stacked:true, beginAtZero:true } },
             plugins: { legend:{ position:'bottom', labels:{ font:{size:10} } } }
         }
@@ -5527,8 +8509,9 @@ if ($page.find('#ud-leniency-bar').length) {
                   pointRadius:0, backgroundColor:'transparent' }
             ]
         },
+        plugins: [dataLabelPlugin],
         options: {
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } },
             scales: { y:{ beginAtZero:false, min: Math.max(0, popAvg - 1.5), max: Math.min(5, popAvg + 1.5) } },
             plugins: { legend:{ position:'bottom', labels:{ font:{size:10} } } }
         }
@@ -5546,8 +8529,9 @@ if ($page.find('#ud-spread-bar').length) {
             labels: luk,
             datasets: [{ label:'Std Dev', data: stdDevs, backgroundColor: sdColors, borderRadius:5, borderWidth:0 }]
         },
+        plugins: [dataLabelPlugin],
         options: {
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } },
             scales: { y:{ beginAtZero:true, max: Math.min(5, Math.max(...stdDevs) + 0.5) } },
             plugins: {
                 legend:{ display:false },
@@ -5571,8 +8555,9 @@ if ($page.find('#ud-delay-unit-bar').length) {
                 { label:'Watch 15–30d',   data: duk.map(u => delUnitMap[u].watch),    backgroundColor:'#0f1f3d', borderRadius:4, borderWidth:0 },
             ]
         },
+        plugins: [dataLabelPlugin],
         options: {
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } },
             scales: { x:{ stacked:true, grid:{display:false} }, y:{ stacked:true, beginAtZero:true } },
             plugins: { legend:{ position:'bottom', labels:{ font:{size:10} } } }
         }
@@ -5591,8 +8576,9 @@ if ($page.find('#ud-delay-donut').length) {
                 borderColor: '#fff', borderWidth: 3
             }]
         },
+        plugins: [dataLabelPlugin],
         options: {
-            responsive:true, maintainAspectRatio:false, cutout:'55%',
+            responsive:true, maintainAspectRatio:false, cutout:'55%',layout: { padding: { top: 20 } },
             plugins: { legend:{ position:'bottom', labels:{ font:{size:10} } } }
         }
     });
@@ -5610,8 +8596,9 @@ if ($page.find('#ud-calibvar-bar').length) {
             labels: cvk,
             datasets: [{ label:'Score Std Dev', data: stdDevs2, backgroundColor: cvColors, borderRadius:5, borderWidth:0 }]
         },
+        plugins: [dataLabelPlugin],
         options: {
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } },
             scales: { y:{ beginAtZero:true } },
             plugins: {
                 legend:{ display:false },
@@ -5636,8 +8623,9 @@ if ($page.find('#ud-align-bar').length) {
             labels: cvk,
             datasets: [{ label:'Alignment %', data: alignRates, backgroundColor: alColors, borderRadius:5, borderWidth:0 }]
         },
+        plugins: [dataLabelPlugin],
         options: {
-            responsive:true, maintainAspectRatio:false,
+            responsive:true, maintainAspectRatio:false,layout: { padding: { top: 20 } },
             scales: { y:{ beginAtZero:true, max:100, ticks:{ callback: v => v + '%' } } },
             plugins: {
                 legend:{ display:false },
@@ -5752,10 +8740,17 @@ frappe.call({
 
 /* ── 4. RENDER FUNCTION ───────────────────────────────────────────────────── */
 function render_historical_section(hd) {
+    window.historicalPerformanceData = {
+        years: hd.years,
+        units: hd.units,
+        combined: hd.combined,
+        trend: hd.trend,
+        by_unit: hd.by_unit
+    };
 
     const GRADES       = ['A', 'B', 'C', 'D', 'E'];
     const GRADE_LABELS = { A:'A (Excellent)', B:'B (Very Good)', C:'C (Good)', D:'D (Acceptable)', E:'E (Poor)' };
-    const GRADE_COLORS = { A:'#C8102E', B:'#42a5f5', C:'#66bb6a', D:'#ffa726', E:'#e53935' };
+    const GRADE_COLORS = { A:'#28a745 ', B:'#AED581 ', C:'#FFEE58 ', D:'#ffc107 ', E:'#C8102E' };
     const GRADE_SCORE  = { A:5, B:4, C:3, D:2, E:1 };
 
     let years = hd.years;   // sorted strings
@@ -5800,7 +8795,7 @@ function render_historical_section(hd) {
             </div>
 
             <!-- Summary table -->
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-hist-heat">
                     <thead>
                         <tr>
@@ -5924,12 +8919,13 @@ function render_historical_section(hd) {
         <div>
             <div style="font-size:12px;color:#868e96;margin-bottom:10px;">
                 Cell = weighted avg score (A=5…E=1) per unit per year.
-                <span style="color:#1b6e30;font-weight:600;">Green ≥ 4</span> ·
-                <span style="color:#1565c0;font-weight:600;">Blue ≥ 3</span> ·
-                <span style="color:#c17000;font-weight:600;">Orange ≥ 2</span> ·
-                <span style="color:#b71c1c;font-weight:600;">Red &lt; 2</span>
+                <span style="color:#28a745;font-weight:600;">Green ≥ 4</span> ·
+                <span style="color:#AED581;font-weight:600;">Light Green 3–4</span> ·
+                <span style="color:#FFEE58;font-weight:600;">Yellow 2–3</span> ·
+                <span style="color:#ffc107;font-weight:600;">Orange 1–2</span> ·
+                <span style="color:#C8102E;font-weight:600;">Red ≤ 1</span>
             </div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-hist-heat">
                     <thead>
                         <tr>
@@ -6082,18 +9078,31 @@ function render_historical_section(hd) {
         }));
 
         mkChart('ud-hist-unit-comp', {
-            type: 'bar',
-            data: { labels: units, datasets: unitDatasets },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                scales: {
-                    x: { grid: { display: false }, ticks: { font: { size: 10 } } },
-                    y: { beginAtZero: true, ticks: { stepSize: 1 },
-                         title: { display: true, text: 'Employee Count' } }
-                },
-                plugins: { legend: { position: 'bottom' } }
+    type: 'bar',
+    data: { labels: units, datasets: unitDatasets },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: {
+            padding: { top: 24 }   // ← moved out of options.plugins (wrong location)
+        },
+        scales: {
+            x: {
+                grid: { display: false },
+                ticks: { font: { size: 10 } }
+            },
+            y: {
+                beginAtZero: true,
+                ticks: { stepSize: 1 },
+                title: { display: true, text: 'Employee Count' },
+                grace: '15%'   // ← adds headroom above tallest bar for label
             }
-        });
+        },
+        plugins: {
+            legend: { position: 'bottom' }
+        }
+    }
+});   // ← removed the `true` argument, not needed here;
 
         // Build comparison table for selected year
         let tblRows = units.map(u => {
@@ -6181,8 +9190,8 @@ function render_historical_section(hd) {
                         datasets: [{
                             label: 'Combined Avg Score',
                             data:  years.map(yr => hd.trend.combined[yr] || null),
-                            borderColor:'#C8102E', backgroundColor:'rgba(200,16,46,.08)',
-                            pointRadius:6, pointBackgroundColor:'#C8102E', tension:.35, fill:true
+                             borderColor:'#7b1fa2 ', backgroundColor:'rgba(200,16,46,.08)',
+                            pointRadius:6, pointBackgroundColor:'#7b1fa2 ', tension:.35, fill:true
                         }]
                     },
                     options: {
@@ -7007,16 +10016,56 @@ function render_ld_section(data, unit) {
             let TARGET     = 5.0;
  
             // ── Build gap list sorted by severity (lowest score first) ───────
+            // let gapList = kraNames.map(n => {
+            //     let a    = kraAgg[n];
+            //     let avg  = a.count ? a.totalAssr / a.count : 0;
+            //     let sAvg = a.count ? a.totalSelf / a.count : 0;
+            //     let gap  = TARGET - avg;
+            //     let pct  = Math.round((avg / TARGET) * 100);
+            //     let sev  = avg <= 2.0 ? 'critical' : avg <= GAP_THRESH ? 'moderate' : 'low';
+            //     return { name:n, avg, sAvg, gap:gap.toFixed(2), pct, sev, count:a.count, unit:a.unit,
+            //              employees:[...new Set(a.employees)] };
+            // }).sort((a,b) => a.avg - b.avg);
+            const priorityKRAs = [
+                "Safety",
+                "Integrity",
+                "Quality",
+                "Simplicity",
+                "Respect",
+                "CONTINUOUS IMPROVEMENT"
+            ];
+
             let gapList = kraNames.map(n => {
-                let a    = kraAgg[n];
-                let avg  = a.count ? a.totalAssr / a.count : 0;
-                let sAvg = a.count ? a.totalSelf / a.count : 0;
-                let gap  = TARGET - avg;
-                let pct  = Math.round((avg / TARGET) * 100);
-                let sev  = avg <= 2.0 ? 'critical' : avg <= GAP_THRESH ? 'moderate' : 'low';
-                return { name:n, avg, sAvg, gap:gap.toFixed(2), pct, sev, count:a.count, unit:a.unit,
-                         employees:[...new Set(a.employees)] };
-            }).sort((a,b) => a.avg - b.avg);
+    let a    = kraAgg[n];
+    let avg  = a.count ? a.totalAssr / a.count : 0;
+    let sAvg = a.count ? a.totalSelf / a.count : 0;
+    let gap  = TARGET - avg;
+    let pct  = Math.round((avg / TARGET) * 100);
+    let sev  = avg <= 2.0 ? 'critical' : avg <= GAP_THRESH ? 'moderate' : 'low';  // ← add back
+
+    return {
+        name: n,
+        avg,
+        sAvg,
+        gap: gap.toFixed(2),
+        pct,
+        sev,                                          // ← add back
+        count: a.count,
+        employees: [...new Set(a.employees)],         // ← add back
+    };
+}).sort((a, b) => {
+    const aName = a.name.trim().toUpperCase();
+    const bName = b.name.trim().toUpperCase();
+
+    const aIndex = priorityKRAs.indexOf(aName);
+    const bIndex = priorityKRAs.indexOf(bName);
+
+    if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+    if (aIndex !== -1) return -1;
+    if (bIndex !== -1) return 1;
+
+    return a.avg - b.avg;
+});
  
             let criticalGaps = gapList.filter(g => g.sev === 'critical').length;
             let moderateGaps = gapList.filter(g => g.sev === 'moderate').length;
@@ -7142,7 +10191,7 @@ function render_ld_section(data, unit) {
             </div>
             
             <div style="font-size:12px;font-weight:600;color:#0f1f3d;margin-bottom:10px;">📋 Full Competency Gap Register</div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th>Competency / KRA</th>
@@ -7256,6 +10305,41 @@ function render_ld_section(data, unit) {
                     else                  unitLinkMap[u].belowTarget++;
                 }
             });
+
+            window.learningDevelopmentData = {
+    summary: {
+        criticalSkillGaps: criticalGaps,
+        moderateGaps: moderateGaps,
+        onTrack: lowGaps,
+        trainingNeeded: trainingNeeded,
+        ldEffectivenessRate: ldCompRate
+    },
+    competencyGaps: gapList.map(g => ({
+        competency: g.name,
+        avg_self_score: Number(g.sAvg.toFixed(2)),
+        avg_assessor_score: Number(g.avg.toFixed(2)),
+        gap_to_target: Number(parseFloat(g.gap).toFixed(2)),
+        severity: g.sev,
+        employee_count: g.count,
+        self_inflated: g.sAvg > g.avg
+    })),
+    unitEffectiveness: Object.keys(unitLinkMap).sort().map(u => {
+        let ul = unitLinkMap[u];
+        let tot = ul.completed + ul.pending;
+        let effPct = ul.completed ? Math.round(ul.aboveTarget / ul.completed * 100) : 0;
+        return {
+            unit: u,
+            total: tot,
+            completed: ul.completed,
+            pending: ul.pending,
+            overdue: ul.overdue,
+            above_target: ul.aboveTarget,
+            below_target: ul.belowTarget,
+            effectiveness_pct: effPct,
+            ld_risk: effPct < 40 ? 'High' : effPct < 70 ? 'Moderate' : 'Effective'
+        };
+    })
+};
  
             let linkTableRows = Object.keys(unitLinkMap).sort().map(u => {
                 let ul  = unitLinkMap[u];
@@ -7357,7 +10441,7 @@ function render_ld_section(data, unit) {
                 </table>
             </div>
             <div style="font-size:12px;font-weight:600;color:#0f1f3d;margin-bottom:8px;">👤 Employee-Level Learning Linkage</div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-table">
                     <thead><tr>
                         <th style="width:36px;">#</th>
@@ -7423,7 +10507,7 @@ function render_ld_section(data, unit) {
                 <span style="color:#c17000;font-weight:600;">Orange 2–3</span> ·
                 <span style="color:#b71c1c;font-weight:600;">Red &lt;2</span>
             </div>
-            <div style="overflow-x:auto;">
+            <div class="ud-table-scroll-wrap" style="overflow-x:auto;">
                 <table class="ud-matrix-tbl">
                     <thead>
                         <tr>
@@ -7618,7 +10702,48 @@ function render_ld_section(data, unit) {
         }
     });
 }
-        } // end render_dashboard
+        // completion status
+        $page.find('#btn-ai-completion-status')
+        .off('click')
+        .on('click', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-completion-status',
+                'unit_completion_insights',
+                {
+                    total,
+                    completed,
+                    pending,
+                    overdue
+                }
+            );
+        });
+        // high / low performer tracker
+        $page.find('#btn-ai-low-high-performance')
+        .off('click')
+        .on('click', function () {
+
+            fetch_ai_insights(
+                this,
+                'ai-content-low-high-performance',
+                'unit_low_high_performance_tracker_insights',
+                {
+                    "unitLabel": unitLabel,
+                    "perfTop": perfTopList.length,
+                    "perfStrong": perfStrongList.length,
+                    "perfMiddle": perfMiddleList.length,
+                    "perfCritical": perfCritical.length,
+                    "perfAvgScoreVal": perfAvgScoreVal,
+                }
+            );
+        });
+        
+    // ── Apply report type filter after render ──────────────────────────────
+setTimeout(() => {
+    apply_report_type_filter();
+}, 100);    
+    } // end render_dashboard
 
     } // end init
 

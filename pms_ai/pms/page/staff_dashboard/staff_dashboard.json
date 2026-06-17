@@ -4,13 +4,17 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-05-21 10:05:40.157460",
+ "modified": "2026-05-29 12:16:10.397264",
  "modified_by": "Administrator",
  "module": "PMS",
  "name": "staff-dashboard",
  "owner": "Administrator",
  "page_name": "staff-dashboard",
- "roles": [],
+ "roles": [
+  {
+   "role": "Appraisal Assessor"
+  }
+ ],
  "script": null,
  "standard": "Yes",
  "style": null,

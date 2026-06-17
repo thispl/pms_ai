@@ -161,50 +161,57 @@ frappe.ui.form.on('Appraisal', {
     },
 
     refresh(frm) {
-        frm.add_custom_button(__('Update Image'), function() {
-    
-            let d = new frappe.ui.Dialog({
-                title: __('Upload Employee Image'),
-                fields: [
-                    {
-                        label: __('Select Image'),
-                        fieldname: 'new_image',
-                        fieldtype: 'AttachImage',
-                        reqd: 1
-                    }
-                ],
-                primary_action_label: __('Submit'),
-                primary_action(values) {
-                    if (!values.new_image) return;
-                    frappe.dom.freeze(__('Validating and Updating Image...'));
-                    frappe.call({
-                        method: "pms_ai.custom.validate_and_set_image", 
-                        args: { 
-                            "file_url": values.new_image,
-                            "employee": frm.doc.employee
-                        },
-                        callback: function(r) {
-                            frappe.dom.unfreeze(); 
-                            if (r.message === "Not Allow") {
-                                d.set_value('new_image', ''); 
-                                frappe.msgprint("File size is too large. It must be less than 100 KB.");
-                            } else if (r.message === "Success") {
-                                d.hide();
-                                frappe.msgprint(__('Updated'));
-                                setTimeout(() => {
-                                    frm.refresh();
-                                }, 1000);
+        let is_assessor = frappe.user.has_role('Appraisal Assessor');
+         frappe.db.get_value("Employee", { user_id: frappe.session.user }, "name")
+            .then(r => {
+                let doc = r.message;
+                if (!frm.doc.__islocal) {
+                     frm.add_custom_button(__('Update Image'), function() {
+                        let d = new frappe.ui.Dialog({
+                            title: __('Upload Employee Image'),
+                            fields: [
+                                {
+                                    label: __('Select Image'),
+                                    fieldname: 'new_image',
+                                    fieldtype: 'AttachImage',
+                                    reqd: 1
+                                }
+                            ],
+                            primary_action_label: __('Submit'),
+                            primary_action(values) {
+                                if (!values.new_image) return;
+                                frappe.dom.freeze(__('Validating and Updating Image...'));
+                                frappe.call({
+                                    method: "pms_ai.custom.validate_and_set_image", 
+                                    args: { 
+                                        "file_url": values.new_image,
+                                        "employee": frm.doc.employee
+                                    },
+                                    callback: function(r) {
+                                        frappe.dom.unfreeze(); 
+                                        if (r.message === "Not Allow") {
+                                            d.set_value('new_image', ''); 
+                                            frappe.msgprint("File size is too large. It must be less than 100 KB.");
+                                        } else if (r.message === "Success") {
+                                            d.hide();
+                                            frappe.msgprint(__('Updated'));
+                                            setTimeout(() => {
+                                                frm.refresh();
+                                            }, 1000);
+                                        }
+                                    },
+                                    error: function() {
+                                        frappe.dom.unfreeze();
+                                    }
+                                });
                             }
-                        },
-                        error: function() {
-                            frappe.dom.unfreeze();
-                        }
+                        });
+
+                        d.show();
                     });
                 }
             });
-
-            d.show();
-        });
+       
         $(".layout-side-section").hide();
         $(".sidebar-toggle-btn").hide();
         $(".layout-main-section").removeClass("col-sm-9").addClass("col-sm-12");
@@ -225,13 +232,22 @@ frappe.ui.form.on('Appraisal', {
 
         
         if(frm.doc.workflow_state != "Draft"){
-             frappe.db.get_value(
+            const b_grades = ["B1", "B2", "B3", "B4", "B5"];
+            let grade = frm.doc.custom_grade;
+            if (b_grades.includes(grade)) {
+                frm.set_df_property("remarks", "read_only", 1);
+            }
+            if (frm.doc.workflow_state != "Pending for Assessor") {
+                frm.set_df_property("custom_accessor_comments", 'read_only', 1);
+            }
+            
+            frappe.db.get_value(
             "Employee",
             { user_id: frappe.session.user },
             "name"
         ).then(r => {
 
-            let is_assessor = frappe.user.has_role('Appraisal Assessor');
+            
 
             // Prevent self assessment
             if (r.message.name == frm.doc.employee) {
@@ -268,7 +284,6 @@ frappe.ui.form.on('Appraisal', {
                 fields.forEach(field => {
 
                     if (frm.fields_dict[field]) {
-
                         frm.set_df_property(field, 'read_only', 1);
 
                         // For child tables
@@ -285,6 +300,11 @@ frappe.ui.form.on('Appraisal', {
         });
         }
         if(frm.doc.workflow_state =="Draft"){
+            const b_grades = ["B1", "B2", "B3", "B4", "B5"];
+            let grade = frm.doc.custom_grade;
+            if (b_grades.includes(grade)) {
+                frm.set_df_property("remarks", "read_only", 1);
+            }
             frm.set_df_property("custom_accessor_comments", 'read_only', 1);
     
             frappe.db.get_value(
@@ -293,11 +313,15 @@ frappe.ui.form.on('Appraisal', {
                 "name"
             ).then(r => {
             if (r.message.name !== frm.doc.employee && !["A1", "A2", "A3", "A4", "A5"].includes(frm.doc.custom_grade)) { 
-                frm.set_read_only();
+                if(frappe.session.user !="Administrator"){
+                    frm.set_read_only();
+                }
+                
             }
             if (is_assessor && ["A1", "A2", "A3", "A4", "A5"].includes(frm.doc.custom_grade)){
                 frm.set_df_property("custom_employee_comments", "read_only", 0);
             }
+            
             });
              frm.doc.custom_objectives.forEach((row) => {
                     frappe.model.set_value(
@@ -313,6 +337,7 @@ frappe.ui.form.on('Appraisal', {
         }
         if(frm.doc.workflow_state=="Approved"){
             frm.set_read_only();
+            // frm.save()
         }
 
         if (frm.doc.custom_restricted) {
@@ -344,7 +369,6 @@ frappe.ui.form.on('Appraisal', {
                         r.message.forEach(obj => {
                             let row = frm.add_child('custom_objectives');
                             row.objective = obj.name;
-                            row.description = obj.description;
                         });
 
                         frm.refresh_field('custom_objectives');
@@ -713,9 +737,8 @@ if (frm.doc.appraisal_cycle && frm.doc.employee) {
         frappe.ui.toolbar.full_width = true;
         $(".btn-toggle-sidebar").hide();
         $(".layout-side-section").hide();
-        if (!frappe.user.has_role("System Manager")) {
-            frm.remove_custom_button("View Goals");
-        }
+        frm.remove_custom_button("View Goals");
+        
         // // Hide timeline safely
         if (frm.timeline && frm.timeline.wrapper) {
             frm.timeline.wrapper.hide();
@@ -1812,7 +1835,7 @@ blockEls.forEach(function(el) {
         }
 
         frm.get_field('custom_note').$wrapper.html("Note: If anyone scores 1&2 in Safety  it will not be considered as 4 & 5 in Overall Effectiveness rating.");
-        if (frappe.user.has_role("System Manager")) {
+        if (frappe.user.has_role("Appraisal Assessor")) {
             frm.add_custom_button(
                 __("Generate AI Insights ✨ "),
                 function () {
@@ -1905,7 +1928,7 @@ blockEls.forEach(function(el) {
             title: __('✨ Generating AI Insights'),
             message: `
                 <div style="text-align: center; padding: 10px;">
-                    <p style="font-size: 14px; color: #555;">Gemini is reading the competencies and writing an L&D action plan...</p>
+                    <p style="font-size: 14px; color: #555;">AI is reading the competencies and writing an L&D action plan...</p>
                     <div class="progress" style="height: 12px; margin-top: 15px; border-radius: 6px;">
                         <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%; background-color: #2490ef;"></div>
                     </div>

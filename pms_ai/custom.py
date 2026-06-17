@@ -72,6 +72,18 @@ def update_appraisal_score(doc, method):
                             if overall >= 4:
                                 doc.custom_total_self_score =3
                                 doc.custom_total_assessor_score =3
+
+
+    seen_kras = set()
+
+    for row in doc.goals:
+        if row.kra and row.kra in seen_kras:
+            frappe.throw(
+                f"Duplicate KRA detected: '{row.kra}'. Each KRA can only be assigned once."
+            )
+
+        if row.kra:
+            seen_kras.add(row.kra)
     # --- WORKFLOW VALIDATION ---
     previous = doc.get_doc_before_save()
 
@@ -403,7 +415,7 @@ def populate_objectives(doc, method=None):
         for obj in objectives:
             doc.append("custom_objectives", {
                 "objective": obj.name,
-                "description": obj.description
+                # "description": obj.description
             })
 
 
@@ -530,6 +542,11 @@ def appraisal_html_template_employee_overview(appraisal_name):
     show_assessor_stars = is_published or is_assessor or is_admin
     if logined_employee != doc.get("employee"):
         self_editable = False
+
+    if frappe.session.user =="Administrator":
+        self_editable = True
+        assessor_editable = True
+        is_admin = True
     # ── Theme based on role ────────────────────────────────────────────────
     # WORKER CATEGORY (A1–A4): Navy + Gold theme matching the screenshot
     if is_worker:
@@ -891,21 +908,29 @@ def appraisal_html_template_employee_overview(appraisal_name):
                             {inp_readonly}/>
                     </div>
                 </div>"""
-
-            cards += f"""
-            <div class="kra-card" id="kra-card-{card_idx}" data-tbl="{tbl_idx}"
-                data-desc="{desc_safe}"
-                onmouseenter="showKraTooltip(this)" onmouseleave="hideKraTooltip()">
-                <div class="kra-card-icon">{icon}</div>
-                <div class="kra-card-title">{safe(kra_name)}</div>
-                {metric_block}
-                <div class="kra-row-label" style="margin-top:7px;">Assessor</div>
-                <div class="star-row assessor-stars" id="card-assessor-{card_idx}">{assessor_html_card}</div>
-                <input type="hidden" id="metric-rating-{tbl_idx}" value="{assessor_stars}"/>
-                <div class="kra-card-score-wrap">
-                    <span class="score-pill {pill_cls}" id="card-pill-{card_idx}">{assessor_stars} / 5</span>
-                </div>
-            </div>"""
+            if is_published or is_assessor or is_admin:
+                cards += f"""
+                <div class="kra-card" id="kra-card-{card_idx}" data-tbl="{tbl_idx}"
+                    data-desc="{desc_safe}"
+                    onmouseenter="showKraTooltip(this)" onmouseleave="hideKraTooltip()">
+                    <div class="kra-card-icon">{icon}</div>
+                    <div class="kra-card-title">{safe(kra_name)}</div>
+                    {metric_block}
+                    <div class="kra-row-label" style="margin-top:7px;">Assessor</div>
+                    <div class="star-row assessor-stars" id="card-assessor-{card_idx}">{assessor_html_card}</div>
+                    <input type="hidden" id="metric-rating-{tbl_idx}" value="{assessor_stars}"/>
+                    <div class="kra-card-score-wrap">
+                        <span class="score-pill {pill_cls}" id="card-pill-{card_idx}">{assessor_stars} / 5</span>
+                    </div>
+                </div>"""
+            else:
+                cards += f"""
+                <div class="kra-card" id="kra-card-{card_idx}" data-tbl="{tbl_idx}"
+                    data-desc="{desc_safe}"
+                    onmouseenter="showKraTooltip(this)" onmouseleave="hideKraTooltip()">
+                    <div class="kra-card-icon">{icon}</div>
+                    <div class="kra-card-title">{safe(kra_name)}</div>
+                </div>"""
             card_idx += 1
             continue
         if not is_worker:
@@ -1096,7 +1121,7 @@ def appraisal_html_template_employee_overview(appraisal_name):
                 </colgroup>
                 <thead><tr>
                     <th class="col-no">No.</th>
-                    <th class="col-goal">Goal</th>
+                    <th class="col-goal">Competency</th>
                     <th class="col-desc">Description</th>
                     <th class="col-weight">Wt %</th>
                     {self_score_th}
@@ -1171,10 +1196,16 @@ def appraisal_html_template_employee_overview(appraisal_name):
     ]
     pg_headers = ""; pg_cells = ""
     for i, col in enumerate(PG_COLS):
-        dots = "".join(
-    f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 2px;background:{col["color"] if j < (5 - i) else col["border"]};"></span>'
-    for j in range(5)
-)
+        stars = "".join(
+            f'<svg viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:13px;height:13px;margin:0 2px;">'
+            f'<polygon points="7,1 8.8,5.3 13.3,5.7 10,8.8 11,13.2 7,10.8 3,13.2 4,8.8 0.7,5.7 5.2,5.3"'
+            f' fill="{"" + col["color"] + "" if j < (5 - i) else "none"}"'
+            f' stroke="{col["color"] if j < (5 - i) else col["border"]}"'
+            f' stroke-width="1.1" stroke-linejoin="round"'
+            f' opacity="{"1" if j < (5 - i) else "0.5"}"/>'
+            f'</svg>'
+            for j in range(5)
+        )
         pg_headers += f"""
         <th class="pg-col-head" style="background:{col['light']};border-right:1px solid {col['border']};border-bottom:4px solid {col['color']};">
             <div style="width:46px;height:46px;border-radius:12px;background:{col['light']};border:1.5px solid {col['border']};display:flex;align-items:center;justify-content:center;margin:0 auto 10px;box-shadow:0 2px 8px {col['color']}22;">
@@ -1182,7 +1213,7 @@ def appraisal_html_template_employee_overview(appraisal_name):
             </div>
             <span class="pg-num-badge" style="background:{col['color']};box-shadow:0 2px 6px {col['color']}44;">{col['num']}</span>
             <span class="pg-col-label" style="color:{col['text']};font-size:12px;font-weight:700;">{col['label']}</span>
-            <div style="margin-top:8px;line-height:1;">{dots}</div>
+            <div style="margin-top:8px;line-height:1;">{stars}</div>
         </th>"""
         pg_cells += f"""
         <td class="pg-desc-cell" style="background:{col['light']};border-right:1px solid {col['border']};">
@@ -1253,30 +1284,89 @@ def appraisal_html_template_employee_overview(appraisal_name):
             </thead>
             <tbody><tr>{pg_cells}</tr></tbody>
         </table>"""
-
     if is_worker:
         perf_grid_html += f"""
-    <div class="worker-criteria">
-        <div class="wc-title">⚙️ Evaluation Criteria</div>
-        <div class="wc-grid">
-            <div class="wc-card">
-                <div class="wc-card-title">📈 Productivity %</div>
-                <div class="wc-row"><span>1 - Poor</span><span>Below 86%</span></div>
-                <div class="wc-row"><span>2 - Acceptable</span><span>87% – 90%</span></div>
-                <div class="wc-row"><span>3 - Good</span><span>91% – 100%</span></div>
-                <div class="wc-row"><span>4 - Very Good</span><span>101% – 120%</span></div>
-                <div class="wc-row"><span>5 - Excellent</span><span>Above 120%</span></div>
+        <div class="worker-criteria">
+            <div class="wc-title">⚙️ Evaluation Criteria</div>
+            <div class="wc-grid">
+                <div class="wc-card">
+                    <div class="wc-card-title">📈 Productivity %</div>
+                    <div class="wc-row">
+                        <div class="wc-row-left">
+                            <div class="arrow-indicator"><svg width="12" height="12" viewBox="0 0 12 12"><polygon points="0,0 12,6 0,12" fill="#A32D2D"/></svg></div>
+                            <span>Poor</span>
+                        </div>
+                        <span>Below 86%</span>
+                    </div>
+                    <div class="wc-row">
+                        <div class="wc-row-left">
+                            <div class="arrow-indicator"><svg width="12" height="12" viewBox="0 0 12 12"><polygon points="0,0 12,6 0,12" fill="#BA7517"/></svg></div>
+                            <span>Acceptable</span>
+                        </div>
+                        <span>87% – 90%</span>
+                    </div>
+                    <div class="wc-row">
+                        <div class="wc-row-left">
+                            <div class="arrow-indicator"><svg width="12" height="12" viewBox="0 0 12 12"><polygon points="0,0 12,6 0,12" fill="#185FA5"/></svg></div>
+                            <span>Good</span>
+                        </div>
+                        <span>91% – 100%</span>
+                    </div>
+                    <div class="wc-row">
+                        <div class="wc-row-left">
+                            <div class="arrow-indicator"><svg width="12" height="12" viewBox="0 0 12 12"><polygon points="0,0 12,6 0,12" fill="#0F6E56"/></svg></div>
+                            <span>Very Good</span>
+                        </div>
+                        <span>101% – 120%</span>
+                    </div>
+                    <div class="wc-row">
+                        <div class="wc-row-left">
+                            <div class="arrow-indicator"><svg width="12" height="12" viewBox="0 0 12 12"><polygon points="0,0 12,6 0,12" fill="#C69B2A"/></svg></div>
+                            <span>Excellent</span>
+                        </div>
+                        <span>Above 120%</span>
+                    </div>
+                </div>
+                <div class="wc-card">
+                    <div class="wc-card-title">📅 Absences</div>
+                    <div class="wc-row">
+                        <div class="wc-row-left">
+                            <div class="arrow-indicator"><svg width="12" height="12" viewBox="0 0 12 12"><polygon points="0,0 12,6 0,12" fill="#A32D2D"/></svg></div>
+                            <span>Poor</span>
+                        </div>
+                        <span>7 Days +</span>
+                    </div>
+                    <div class="wc-row">
+                        <div class="wc-row-left">
+                            <div class="arrow-indicator"><svg width="12" height="12" viewBox="0 0 12 12"><polygon points="0,0 12,6 0,12" fill="#BA7517"/></svg></div>
+                            <span>Acceptable</span>
+                        </div>
+                        <span>5 – 6 Days</span>
+                    </div>
+                    <div class="wc-row">
+                        <div class="wc-row-left">
+                            <div class="arrow-indicator"><svg width="12" height="12" viewBox="0 0 12 12"><polygon points="0,0 12,6 0,12" fill="#185FA5"/></svg></div>
+                            <span>Good</span>
+                        </div>
+                        <span>3 – 4 Days</span>
+                    </div>
+                    <div class="wc-row">
+                        <div class="wc-row-left">
+                            <div class="arrow-indicator"><svg width="12" height="12" viewBox="0 0 12 12"><polygon points="0,0 12,6 0,12" fill="#0F6E56"/></svg></div>
+                            <span>Very Good</span>
+                        </div>
+                        <span>1 – 2 Days</span>
+                    </div>
+                    <div class="wc-row">
+                        <div class="wc-row-left">
+                            <div class="arrow-indicator"><svg width="12" height="12" viewBox="0 0 12 12"><polygon points="0,0 12,6 0,12" fill="#C69B2A"/></svg></div>
+                            <span>Excellent</span>
+                        </div>
+                        <span>Zero Unauthorized</span>
+                    </div>
+                </div>
             </div>
-            <div class="wc-card">
-                <div class="wc-card-title">📅 Absences</div>
-                <div class="wc-row"><span>1 - Poor</span><span>7 Days +</span></div>
-                <div class="wc-row"><span>2 - Acceptable</span><span>5 – 6 Days</span></div>
-                <div class="wc-row"><span>3 - Good</span><span>3 – 4 Days</span></div>
-                <div class="wc-row"><span>4 - Very Good</span><span>1 – 2 Days</span></div>
-                <div class="wc-row"><span>5 - Excellent</span><span>Zero Unauthorized</span></div>
-            </div>
-        </div>
-    </div>"""
+        </div>"""
     if show_oe:
         perf_grid_html += f"""
             <div class="pg-oe-bar">
@@ -1583,6 +1673,11 @@ def appraisal_html_template_employee_overview(appraisal_name):
         .wc-card-title{{ font-size:12px; font-weight:700; margin-bottom:8px; color:{T['wc_card_title']}; }}
         .wc-row{{ display:flex; justify-content:space-between; font-size:11.5px; padding:4px 0; border-bottom:1px dashed {T['wc_row_dash']}; }}
         .wc-row:last-child{{ border-bottom:none; }}
+        .wc-row {{ display: flex; align-items: center; justify-content: space-between; padding: 7px 14px; border-bottom: 0.5px solid #e0e0e0; font-size: 13px; }}
+    .wc-row:last-child {{ border-bottom: none; }}
+    .wc-row-left {{ display: flex; align-items: center; gap: 8px; }}
+    .arrow-indicator {{ width: 14px; height: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }}
+    .arrow-indicator svg {{ display: block; }}
         .mc-wrap{{
     background:rgba(201,168,76,0.06);
     border:1px solid rgba(201,168,76,0.28);
@@ -2485,7 +2580,8 @@ def update_empty_fields_value(doc, method):
                 "custom_significant_achievements",
                 "custom_targets",
                     "custom_accessor_comments",
-                "custom_employee_comments"
+                "custom_employee_comments",
+                "custom_objectives"
             ]
            
 
@@ -2510,7 +2606,8 @@ def update_empty_fields_value(doc, method):
 
                     if field_name in [
                         "custom_significant_achievements",
-                        "custom_targets"
+                        "custom_targets",
+                        "custom_objectives"
                     ]:
 
                         # Add empty row if no rows exist
@@ -2526,8 +2623,43 @@ def update_empty_fields_value(doc, method):
 
                                 if child_field.fieldtype in ["Section Break","Column Break","Heading","Read Only","Table","Date","Select","Link"]:
                                     continue
-                                if child_field.fieldname=="description":
+                                if child_field.fieldname=="description" or child_field.fieldname=='assessee_remark':
                                     child.set(child_field.fieldname, "-")
+                                
+                        else:
+                            if field_name == "custom_objectives":
+                                for row in table_rows:
+                                    if doc.workflow_state == "Pending for Assessor":
+                                        if not row.get("description"):
+                                            row.set("description", "-")
+                                        if not row.get("employee_comments"):
+                                            row.set("employee_comments", "-")
+                                    if doc.workflow_state == "Approved":
+                                        if not row.get("assessor_comments"):
+                                            row.set("assessor_comments", "-")
+                            elif field_name=='custom_significant_achievements':
+                                for row in table_rows:
+                                    if doc.workflow_state == "Pending for Assessor":
+                                        if not row.get("description"):
+                                            row.set("description", "-")
+                                        if not row.get("assessee_remark"):
+                                            row.set("assessee_remark", "-")
+                                    if doc.workflow_state == "Approved":
+                                        if not row.get("assessor_remarks"):
+                                            row.set("assessor_remarks", "-")
+                            elif field_name=='custom_targets':
+                                for row in table_rows:
+                                    if doc.workflow_state == "Pending for Assessor":
+                                        if not row.get("description"):
+                                            row.set("description", "-")
+                                        if not row.get("assesie_remark"):
+                                            row.set("assesie_remark", "-")
+                                    if doc.workflow_state == "Approved":
+                                        if not row.get("assessor_remarks"):
+                                            row.set("assessor_remarks", "-")
+
+                                     
+                                        
 
 
                 # Handle normal custom fields
@@ -2562,3 +2694,53 @@ def validate_and_set_image(file_url, employee):
     frappe.db.commit()
     
     return "Success"
+
+
+
+@frappe.whitelist()
+def update_worker_user_id():
+    employees = frappe.get_all(
+        "Employee",
+        fields=[
+            "name",
+            "custom_unit",
+            "grade",
+            "custom_appraisal_template"
+        ]
+    )
+
+    updated = 0
+
+    for row in employees:
+
+        # Skip if template already assigned
+        if row.custom_appraisal_template:
+            continue
+
+        grade = (row.grade or "").strip()
+        unit = (row.custom_unit or "").strip()
+
+        if not grade or not unit:
+            continue
+
+        # A1–A4 → Worker template
+        if grade in ["A1", "A2", "A3", "A4"]:
+            template_name = f"{grade} - Worker"
+        else:
+            template_name = f"{grade} - {unit}"
+
+        # Check template exists
+        if frappe.db.exists("Appraisal Template", template_name):
+
+            frappe.db.set_value(
+                "Employee",
+                row.name,
+                "custom_appraisal_template",
+                template_name  # variable, not string
+            )
+
+            updated += 1
+
+    frappe.db.commit()
+
+    return f"{updated} employee(s) appraisal template updated successfully"

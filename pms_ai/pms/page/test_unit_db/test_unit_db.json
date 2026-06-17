@@ -1,19 +1,18 @@
 {
  "content": null,
- "creation": "2026-05-17 12:04:30.535843",
+ "creation": "2026-05-30 19:52:51.664765",
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-06-08 17:49:53.125268",
+ "modified": "2026-05-30 19:52:51.664765",
  "modified_by": "Administrator",
  "module": "PMS",
- "name": "pms-dashboard",
+ "name": "test-unit-db",
  "owner": "Administrator",
- "page_name": "pms-dashboard",
+ "page_name": "test-unit-db",
  "roles": [],
  "script": null,
  "standard": "Yes",
  "style": null,
- "system_page": 1,
- "title": "PMS"
+ "system_page": 0
 }

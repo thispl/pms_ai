@@ -427,6 +427,41 @@ frappe.ui.form.on("Appraisal Settings", {
 				query: "pms_ai.pms.doctype.appraisal_settings.appraisal_settings.get_unit_heads"
 			};
 		});
+		frm.set_query("unit", function () {
+			return {
+				filters: [
+					["Unit", "name", "not in", ["Common", "Worker"]]
+				]
+			};
+		});
+		frm.set_query("employee", "employees", function(doc, cdt, cdn) {
+			return {
+				filters: [
+					["Employee", "status", "=", "Active"]
+				]
+			};
+		});
+		frm.set_query("employee", function() {
+			return {
+				filters: {
+					status: "Active"
+				}
+			};
+		});
+		frm.set_query("assessor", function() {
+			return {
+				filters: {
+					status: "Active"
+				}
+			};
+		});
+		frm.set_query("trade_unit", "employees", function(doc, cdt, cdn) {
+			return {
+				filters: {
+					name: ["not in", ["Common", "Worker"]]
+				}
+			};
+		});
 		frm.set_query("appraisal_cycle", function () {
 			
 			return {
@@ -780,7 +815,6 @@ selected_rows.forEach((row, index) => {
 			completed++;
 
 			if (r.message) {
-				console.log(r.message)
 				messages.push(
 					`${r.message}`
 				);
