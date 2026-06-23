@@ -24,7 +24,8 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Assessee",
-   "options": "Employee"
+   "options": "Employee",
+   "read_only": 1
   },
   {
    "fetch_from": "assessor_id.custom_gec_no",
@@ -79,7 +80,8 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Appraisal ID",
-   "options": "Appraisal"
+   "options": "Appraisal",
+   "read_only": 1
   },
   {
    "fetch_if_empty": 1,
@@ -112,8 +114,8 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-06-08 14:49:26.292152",
- "modified_by": "Administrator",
+ "modified": "2026-06-18 13:26:56.827284",
+ "modified_by": "pavithra.s@groupteampro.com",
  "module": "PMS",
  "name": "Assessor Change",
  "owner": "Administrator",

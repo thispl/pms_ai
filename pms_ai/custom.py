@@ -2571,8 +2571,39 @@ def update_the_kra_in_units():
     print(count)
 
 def update_empty_fields_value(doc, method):
+    if doc.custom_significant_achievements:
+        for i in doc.custom_significant_achievements:
+            if i.achievement_justification:
+                size_check=validate_and_set_image(i.achievement_justification,doc.employee)
+                if size_check=='Not Allow':
+                    frappe.throw("File size is too large. It must be less than 100 KB.")
+    
     previous = doc.get_doc_before_save()
-
+    if not previous or (previous and previous.workflow_state == doc.workflow_state):
+   
+        if doc.custom_employment_type == 'Worker':
+            # 1. Fetch rows. If it's empty, create a new row.
+            if not doc.get('custom_training_needed'):
+                # This adds a new row if the table was empty
+                new_row = doc.append('custom_training_needed', {})
+                new_row.description = "-"
+                new_row.needed_training = "-"
+            else:
+                # 2. If rows ALREADY exist, loop and fill missing fields
+                for row in doc.custom_training_needed:
+                    modified = False
+                    
+                    if not row.get("description"):
+                        row.description = "-"
+                        modified = True
+                        
+                    if not row.get("needed_training"):
+                        row.needed_training = "-"
+                        modified = True
+                    
+                    # Direct Frappe to register the change if a value was updated
+                    if modified:
+                        row.flags.updater_reference = True
     if previous and previous.workflow_state != doc.workflow_state:
 
         if doc.workflow_state in ["Pending for Assessor", "Approved", "Accepted"]:
@@ -2581,7 +2612,9 @@ def update_empty_fields_value(doc, method):
                 "custom_targets",
                     "custom_accessor_comments",
                 "custom_employee_comments",
-                "custom_objectives"
+                "custom_objectives",
+                "custom_training_recommendation",
+                "custom_training_needed"
             ]
            
 
@@ -2604,13 +2637,7 @@ def update_empty_fields_value(doc, method):
 
                     table_rows = doc.get(field_name)
 
-                    if field_name in [
-                        "custom_significant_achievements",
-                        "custom_targets",
-                        "custom_objectives"
-                    ]:
-
-                        # Add empty row if no rows exist
+                    if field_name in ["custom_significant_achievements","custom_targets","custom_objectives"]:
                         if not table_rows:
 
                             child = doc.append(field_name, {})
@@ -2623,9 +2650,9 @@ def update_empty_fields_value(doc, method):
 
                                 if child_field.fieldtype in ["Section Break","Column Break","Heading","Read Only","Table","Date","Select","Link"]:
                                     continue
-                                if child_field.fieldname=="description" or child_field.fieldname=='assessee_remark':
+                                if child_field.fieldname in ["description" ,'assessee_remark' ,"recommended_training","needed_training"]:
                                     child.set(child_field.fieldname, "-")
-                                
+                        
                         else:
                             if field_name == "custom_objectives":
                                 for row in table_rows:
@@ -2657,24 +2684,75 @@ def update_empty_fields_value(doc, method):
                                     if doc.workflow_state == "Approved":
                                         if not row.get("assessor_remarks"):
                                             row.set("assessor_remarks", "-")
+                            elif field_name=='custom_training_recommendation':
+                                for row in table_rows:
+                                    if doc.workflow_state in ["Pending for Assessor","Approved"]  :
+                                        if not row.get("description"):
+                                            row.set("description", "-")
+                                        if not row.get("recommended_training"):
+                                            row.set("recommended_training", "-")
 
-                                     
+                            elif field_name=='custom_training_needed':
+                                for row in table_rows:
+                                    if doc.workflow_state in ["Pending for Assessor","Approved"]  :
+                                        if not row.get("description"):
+                                            row.set("description", "-")
+                                        if not row.get("needed_training"):
+                                            row.set("needed_training", "-")
+                                    
+                    if field_name in ["custom_training_recommendation", "custom_training_needed"]:
+                        table_rows = doc.get(field_name) or []
+                        
+                        if not table_rows:
+                            new_row = doc.append(field_name, {})
+                            table_rows = [new_row]
+
+                        if doc.workflow_state == "Pending for Assessor":
+                            if field_name == 'custom_training_needed':
+                                for row in table_rows:
+                                    if not row.get("description"):
+                                        row.description = "-"
+                                    if not row.get("needed_training"):
+                                        row.needed_training = "-"
+
+                        elif doc.workflow_state == "Approved" and doc.custom_employment_type == 'Worker':
+                            if field_name == 'custom_training_needed':
+                                for row in table_rows:
+                                    if not row.get("description"):
+                                        row.description = "-"
+                                    if not row.get("needed_training"):
+                                        row.needed_training = "-"
+                            else: 
+                                for row in table_rows:
+                                    if not row.get("description"):
+                                        row.description = "-"
+                                    if not row.get("recommended_training"):
+                                        row.recommended_training = "-"
+
+                        elif doc.workflow_state == "Approved" and doc.custom_employment_type == 'Staff':
+                            if field_name == 'custom_training_recommendation':
+                                for row in table_rows:
+                                    if not row.get("description"):
+                                        row.description = "-"
+                                    if not row.get("recommended_training"):
+                                        row.recommended_training = "-"
                                         
-
+                                        
+                else:
 
                 # Handle normal custom fields
-                value = doc.get(field_name)
+                    value = doc.get(field_name)
 
-                # Skip accessor comments during Pending for Assessor
-                if (
-                    field_name == "custom_accessor_comments"
-                    and doc.workflow_state == "Pending for Assessor"
-                ):
-                    continue
+                    # Skip accessor comments during Pending for Assessor
+                    if (
+                        field_name == "custom_accessor_comments"
+                        and doc.workflow_state == "Pending for Assessor"
+                    ):
+                        continue
 
-                # Set "-" if empty
-                if value in [None, "", []]:
-                    doc.set(field_name, "-")
+                    # Set "-" if empty
+                    if value in [None, "", []]:
+                        doc.set(field_name, "-")
 
 
 @frappe.whitelist(allow_guest=True)
@@ -2689,6 +2767,7 @@ def validate_kb(file_url):
 def validate_and_set_image(file_url, employee):
     size_check=validate_kb(file_url)
     if size_check == 'Not Allow':
+        
         return "Not Allow"
     frappe.db.set_value('Employee', employee, 'image', file_url, update_modified=True)
     frappe.db.commit()

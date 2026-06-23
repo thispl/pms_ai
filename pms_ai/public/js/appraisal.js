@@ -225,8 +225,8 @@ frappe.ui.form.on('Appraisal', {
             "employee_comments",
             'assessor_comments',
             'custom_rejected_significant_achievements',
-            // 'custom_section_break_cqkdz',
-            // 'custom_section_break_tcibd',
+            'custom_training_needed',
+            'custom_training_recommendation',
             'custom_rejected_significant_achievements'
         ];
 
@@ -236,11 +236,22 @@ frappe.ui.form.on('Appraisal', {
             let grade = frm.doc.custom_grade;
             if (b_grades.includes(grade)) {
                 frm.set_df_property("remarks", "read_only", 1);
-            }
-            if (frm.doc.workflow_state != "Pending for Assessor") {
-                frm.set_df_property("custom_accessor_comments", 'read_only', 1);
+                
             }
             
+            if (frm.doc.custom_employment_type=='Worker'){
+                frm.set_df_property("custom_training_recommendation", "read_only", 0);
+            }else{
+                frm.set_df_property("custom_training_needed", "read_only", 1);
+            }
+            
+            
+            if (frm.doc.workflow_state != "Pending for Assessor") {
+                frm.set_df_property("custom_accessor_comments", 'read_only', 1); 
+            }
+            if (!is_assessor && frm.doc.custom_published==0){
+                frm.set_df_property("custom_training_recommendation", "hidden", 1);
+            }
             frappe.db.get_value(
             "Employee",
             { user_id: frappe.session.user },
@@ -280,7 +291,7 @@ frappe.ui.form.on('Appraisal', {
             }
 
             if (!is_assessor) {
-
+                //  frm.set_df_property("custom_training_recommendation", "hidden", 1);
                 fields.forEach(field => {
 
                     if (frm.fields_dict[field]) {
@@ -304,6 +315,7 @@ frappe.ui.form.on('Appraisal', {
             let grade = frm.doc.custom_grade;
             if (b_grades.includes(grade)) {
                 frm.set_df_property("remarks", "read_only", 1);
+               
             }
             frm.set_df_property("custom_accessor_comments", 'read_only', 1);
     
@@ -320,8 +332,18 @@ frappe.ui.form.on('Appraisal', {
             }
             if (is_assessor && ["A1", "A2", "A3", "A4", "A5"].includes(frm.doc.custom_grade)){
                 frm.set_df_property("custom_employee_comments", "read_only", 0);
+                 
+            }
+            if (frm.doc.custom_employment_type=='Worker'){
+                frm.set_df_property("custom_training_recommendation", "hidden", 0);
+                frm.set_df_property("custom_training_needed", "read_only", 1);
+            }else{
+                frm.set_df_property("custom_training_recommendation", "hidden", 1);
             }
             
+            if (!is_assessor && frm.doc.custom_published==0){
+                frm.set_df_property("custom_training_recommendation", "hidden", 1);
+            }
             });
              frm.doc.custom_objectives.forEach((row) => {
                     frappe.model.set_value(
@@ -693,9 +715,11 @@ if (frm.doc.appraisal_cycle && frm.doc.employee) {
         colorGrid(frm, 'custom_targets');
         colorGrid(frm, 'custom_additional_goals_for_worker_');
         colorGrid(frm, 'custom_objectives');
+        colorGrid(frm, 'custom_training_needed');
+        colorGrid(frm, 'custom_training_recommendation');
 
         // ── Re-apply on change / add / delete ────────────────────────────────────────
-        ['goals', 'custom_significant_achievements', 'custom_targets', 'custom_additional_goals_for_worker_'].forEach(function (fieldname) {
+        ['goals', 'custom_training_recommendation','custom_significant_achievements', 'custom_targets', 'custom_additional_goals_for_worker_','custom_training_needed'].forEach(function (fieldname) {
             var grid = frm.fields_dict[fieldname];
             if (!grid || !grid.grid || !grid.grid.wrapper) return;
 
@@ -2180,7 +2204,6 @@ function color_goal_rows(frm) {
 
     }, 150);
 }
-
 
 
 // function applyArabicTransform(html) {
@@ -4042,6 +4065,36 @@ frappe.ui.form.on("Objective Details", {
 frappe.ui.form.on('Significant Achievements', {
     remarks(frm, cdt, cdn) {
         handle_assessor_remarks_change(frm, cdt, cdn, 'custom_significant_achievements', 'custom_rejected_significant_achievements');
+    },
+    
+    achievement_justification(frm, cdt, cdn) {
+        let row = locals[cdt][cdn];
+        
+        if (row.achievement_justification) {
+            
+            frappe.dom.freeze(__('Validating uploaded file...'));
+            
+            frappe.call({
+                method: "pms_ai.custom.validate_and_set_image", 
+                args: { 
+                    "file_url": row.achievement_justification,
+                    "employee": frm.doc.employee 
+                },
+                callback: function(r) {
+                    frappe.dom.unfreeze(); 
+                    
+                    if (r.message === "Not Allow") {
+                        frappe.model.set_value(cdt, cdn, 'achievement_justification', '');
+                        frappe.throw(__("File size is too large. It must be less than 100 KB."));
+                    } else if (r.message === "Success") {
+                        frappe.show_alert({message: __('File verified successfully!'), indicator: 'green'});
+                    }
+                },
+                error: function() {
+                    frappe.dom.unfreeze();
+                }
+            });
+        }
     }
 });
 
